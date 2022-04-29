@@ -72,10 +72,10 @@ class ModelKernel:
         ...
 
         Parameters:
-            model_cur:  Current particle to provide a new particle in re-sampling procedure.        [np.ndarray]
+            model_cur:  Current particle to provide a new particle in re-sampling procedure.        [numpy.ndarray]
 
         Returns:
-            New particle obtained by sampling form the Markov kernel given the current particle.    [np.ndarray]
+            New particle obtained by sampling form the Markov kernel given the current particle.    [numpy.ndarray]
         """
         p = len(model_cur)
         model_new = deepcopy(model_cur)
@@ -104,8 +104,8 @@ class ModelSelectionSMC:
             verbose:         If True, the methods will print information about the process.     [bool]
             ess_min:         Minimal ESS defined by ess_min_ratio and particle_number.          [float]
             iteration:       Tracks number of iteration.                                        [int]
-            w_log:           Unnormalized logarithmic weights. To calculate normalized ones.    [np.ndarray]
-            w_normalized:    Normalized weights at time t. For t > 0 are used to sample         [np.ndarray]
+            w_log:           Unnormalized logarithmic weights. To calculate normalized ones.    [numpy.ndarray]
+            w_normalized:    Normalized weights at time t. For t > 0 are used to sample         [numpy.ndarray]
                              ancestors at step t+1 from Multinomial(w_normalized).
             _lambda:         Tempering parameter 'lambda' at iteration t; it defines            [float]
                              the sequence of distributions.
@@ -154,7 +154,7 @@ class ModelSelectionSMC:
         and particles 4 and 5 two times.
 
         Returns:
-            Sample of size n from ( 0, 1, ..., len(w_normalized) ) with replacement according to    [np.ndarray]
+            Sample of size n from ( 0, 1, ..., len(w_normalized) ) with replacement according to    [numpy.ndarray]
             probabilities given by w_normalized.
         """
         return multinomial(n=self.particle_number, p=self.w_normalized).rvs()[0]
