@@ -182,7 +182,7 @@ class ModelSelectionSMC:
 
     def compute_integrated_loglike(self, model: numpy.ndarray):
         model_id = get_model_id(model)
-        model_seen = model_id in self.computed_at
+        model_seen = True if self.computed_at.get(model_id,None) else False
         if model_seen:
             n_iterations = self.iteration - self.computed_at[model_id]
             coef_new = self.coefs[model_id][1]
