@@ -1,34 +1,29 @@
 """
 Students: Antoine Carnec, Maxim Fedotov
 
-This is an implementation of the latin square sampler described in
-``
-Dau, Hai-Dang, and Nicolas Chopin. "Waste-free Sequential Monte Carlo." arXiv preprint arXiv:2011.02328 (2020)
-``
-
-We first implement a generic Adaptive SMC Sampler Class.
-This class samples from a posterior `p` of the form
-`p(x) \propto m(x) exp(-V(x))`, where m is the prior and exp(-V) is the likelihood
+Description TODO
 """
 import math
 
-import numpy
+import numpy as np
 from scipy.stats import multinomial
 from scipy.optimize import root_scalar
 from scipy.special import softmax
 from copy import deepcopy
 from collections import Counter
 
-
-def get_model_id(model: numpy.ndarray):
+def get_model_id(model: np.ndarray):
+    """
+    Returns the binary number associated to a model
+    """
     return int('0b' + ''.join((model * 1).astype(str)), 2)
 
 
 def binomial_logit_logll(y, linpred):
-    p = 1 / (1 + numpy.exp(-linpred))
-    if numpy.isclose(p, 0).any() or numpy.isclose(p, 1).any():
+    p = 1 / (1 + np.exp(-linpred))
+    if np.isclose(p, 0).any() or np.isclose(p, 1).any():
         raise Exception("Exact 0 and 1 occur in the computed probabilities.")
-    return numpy.sum(y * numpy.log(p) + (1 - y) * numpy.log(1 - p))
+    return np.sum(y * np.log(p) + (1 - y) * np.log(1 - p))
 
 
 class GLM:
@@ -36,11 +31,11 @@ class GLM:
         pass
 
     @staticmethod
-    def gradient(Xt: numpy.ndarray, y: numpy.ndarray, db_dlinpred: numpy.ndarray):
+    def gradient(Xt: np.ndarray, y: np.ndarray, db_dlinpred: np.ndarray):
         return Xt @ (db_dlinpred - y)
 
     @staticmethod
-    def hessian(X: numpy.ndarray, Xt: numpy.ndarray, d2b_dlinpred2: numpy.ndarray):
+    def hessian(X: np.ndarray, Xt: np.ndarray, d2b_dlinpred2: np.ndarray):
         return (Xt * d2b_dlinpred2) @ X
 
 
@@ -52,19 +47,18 @@ class ApproxIntegral:
     # version for GLMs
     def ala_log(y, linpred_old, coef_new, gradient, hessian_inv, loglikelihood, coef_prior):
         p = len(coef_new)
-        return loglikelihood(y, linpred_old) + numpy.log(coef_prior(coef_new, p)) + (p / 2) * numpy.log(2 * numpy.pi) + \
-               0.5 * numpy.log(numpy.linalg.det(hessian_inv)) + 0.5 * gradient.transpose() @ hessian_inv @ gradient
+        return loglikelihood(y, linpred_old) + np.log(coef_prior(coef_new, p)) + (p / 2) * np.log(2 * np.pi) + \
+               0.5 * np.log(np.linalg.det(hessian_inv)) + 0.5 * gradient.transpose() @ hessian_inv @ gradient
 
 
 # Here we set default g = 1. In fact, we might also think about adding rho parameter
-def normal_prior(beta: numpy.ndarray, p: int, g=1):
-    return 1 / (2 * numpy.pi * g)**(p / 2) * numpy.exp(- 1 / g * beta.dot(beta) / 2)
+def normal_prior(beta: np.ndarray, p: int, g=1):
+    return 1 / (2 * np.pi * g)**(p / 2) * np.exp(- 1 / g * beta.dot(beta) / 2)
 
 
 class ModelKernel:
     """
-    Implements a Markov kernel to be used in SMC for the Latin square enumeration problem. See
-    Dau, Hai-Dang, and Nicolas Chopin. "Waste-free Sequential Monte Carlo." (2020).
+    TODO
 
     Methods:
         sample: Samples new matrix given the current one by interchanging a pair of elements.    @static
@@ -73,10 +67,9 @@ class ModelKernel:
         pass
 
     @staticmethod
-    def sample(model_cur: numpy.ndarray) -> numpy.ndarray:
+    def sample(model_cur: np.ndarray) -> np.ndarray:
         """
-        Takes a d x d matrix and selects a row i and two columns j1 and j2 at random.
-        Then it swaps the values of x[i,j1] and x[i,j2].
+        ...
 
         Parameters:
             model_cur:  Current particle to provide a new particle in re-sampling procedure.        [numpy.ndarray]
@@ -86,18 +79,17 @@ class ModelKernel:
         """
         p = len(model_cur)
         model_new = deepcopy(model_cur)
-        i = numpy.random.choice(p)
+        i = np.random.choice(p)
         model_new[i] = not model_cur[i]
         while not model_new.any():
-            i = numpy.random.choice(p)
+            i = np.random.choice(p)
             model_new[i] = not model_cur[i]
         return model_new
 
 
 class ModelSelectionSMC:
     """
-        Implements Adaptive SMC algorithm (Algorithm 17.3) form the book:
-        Papaspiliopoulos, Chopin (2020) An introduction to sequential Monte Carlo
+        ...
 
         Attributes:
             prior:           A prior distribution according to which the initial sample is     [callable]
@@ -122,24 +114,9 @@ class ModelSelectionSMC:
             logLt:           Logarithm of the estimated normalized constant, basically:         [float]
                              \sum_{s=0}^{t} log( \sum_{n=1}^{N} w_s^n ).
     """
-    def __init__(self, X: numpy.ndarray, y: numpy.ndarray, likelihood: callable, db: callable, d2b: callable,
-                 coef_init: numpy.array, model_init: numpy.array, coef_prior: callable, kernel: callable,
+    def __init__(self, X: np.ndarray, y: np.ndarray, likelihood: callable, db: callable, d2b: callable,
+                 coef_init: np.array, model_init: np.array, coef_prior: callable, kernel: callable,
                  kernel_steps: int, particle_number: int, ess_min_ratio: float = 1/2, verbose: bool = False) -> None:
-        """
-        Instantiates Adaptive SMC sampler.
-
-        Parameters:
-            prior:           A prior distribution according to which the initial sample is      [callable]
-                             drawn. Corresponds to pi_0 distribution.
-            kernel:          An object with method 'sample'; Markov kernel that draws a new     [callable]
-                             sample given the current sample (particle).
-            kernel_steps:    Number of times the kernel is applied to a particle; defines a     [int]
-                             'depth' of MCMC resampling.
-            particle_number: Size of the sample                                                 [int]
-            ess_min_ratio:   Ratio that defines the min Effective Sample Size that the          [float]
-                             algorithm maintains at each step.
-            verbose:         If True, the methods will print information about the process.     [bool]
-        """
         self.X = X
         self.Xt = X.transpose()
         self.y = y
@@ -151,18 +128,20 @@ class ModelSelectionSMC:
         self.kernel = kernel
         self.kernel_steps = kernel_steps
         self.coef_prior = coef_prior  # This is the distribution that you start with.
+                                      # Is it?
         self.particle_number = particle_number
         self.verbose = verbose
         self.ess_min = particle_number * ess_min_ratio  # Papaspiliopoulos & Chopin states that the performance
                                                         # of the algorithm is pretty robust to this choice.
         # Initializing useful quantities for later
         self.iteration = 1  # Tracks the t variable
-        self.particles = [None] * self.particle_number
+        self.particles = [None] * self.particle_number # Make into np array?
         self.w_log = None  # unnormalized logweights
         self.w_normalized = None  # normalized weights
         self.w_hat_log = None  # reweighing multipliers
         self.logLt = 0.  # This will hold the cumulative value of the log normalising constant at time t.
-        self.coefs = {}  # Used to save computed coefficients for models.
+        self.coefs = {}  # Used to save computed coefficients for models. 
+                         # TODO add type annotation to make clear what this dictionary is
         self.integrated_loglikes = {}  # Used to save integrated likelihoods for models.
         self.computed_at = {}  # Used to save the number of the latest iteration where the coefficients and LL were upd.
 
@@ -180,26 +159,26 @@ class ModelSelectionSMC:
         """
         return multinomial(n=self.particle_number, p=self.w_normalized).rvs()[0]
 
-    def compute_integrated_loglike(self, model: numpy.ndarray):
+    def compute_integrated_loglike(self, model: np.ndarray):
         model_id = get_model_id(model)
-        model_seen = model_id in self.computed_at
+        model_seen = True if self.computed_at.get(model_id,None) else False
         if model_seen:
             n_iterations = self.iteration - self.computed_at[model_id]
             coef_new = self.coefs[model_id][1]
         else:
             n_iterations = self.iteration
             coef_new = self.coef_init[model]
-            self.coefs[model_id] = [None, None]
+            self.coefs[model_id] = [None, None] # TODO make this a mutable fixed size array?
             self.integrated_loglikes[model_id] = [None, None]
         integrated_loglike = self.integrated_loglikes[model_id][1]
-        for iter in range(n_iterations):
+        for iter in range(n_iterations): # TODO abstract this into a function
             coef_old = coef_new
             linpred_old = self.X[:, model] @ coef_old
-            db = self.db(linpred_old)  # 1 / (1 + numpy.exp(-linpred_old))
+            db = self.db(linpred_old)  # 1 / (1 + np.exp(-linpred_old))
             d2b = self.d2b(linpred_old)  # db * (1 - db)
             gradient = GLM.gradient(self.Xt[model, :], self.y, db)
             hessian = GLM.hessian(self.X[:, model], self.Xt[model, :], d2b)
-            hessian_inv = numpy.linalg.inv(hessian)
+            hessian_inv = np.linalg.inv(hessian)
             coef_new = coef_old - hessian_inv @ gradient
             if n_iterations - iter <= 2:
                 integrated_loglike = ApproxIntegral.ala_log(self.y, linpred_old, coef_new,
@@ -212,20 +191,23 @@ class ModelSelectionSMC:
         self.computed_at[model_id] = self.iteration
         return integrated_loglike
 
-    def gibbs_iteration(self, model: numpy.ndarray):
+    # Does this need to be part of the class?
+    def gibbs_iteration(self, model: np.ndarray):
         model_new = model
         for _ in range(self.kernel_steps):
             model_old = model_new
             model_new = self.kernel.sample(model_old)  # Draw a new sample from kernel
             integrated_loglike_model_old = self.compute_integrated_loglike(model_old)
             integrated_loglike_model_new = self.compute_integrated_loglike(model_new)
-            accept_prob = numpy.exp(min(0, integrated_loglike_model_new - integrated_loglike_model_old))
-            accept = numpy.random.binomial(1, accept_prob)
+            accept_prob = np.exp(min(0, integrated_loglike_model_new - integrated_loglike_model_old))
+            accept = np.random.binomial(1, accept_prob)
             model_new = model_new if accept else model_old
         return model_new
 
     def sample_init(self, cut: int):
-        model_new = self.model_init
+        """
+        """
+        model_new = self.model_init # Todo abstract away
         for i in range(self.particle_number + cut):
             model_old = model_new
             model_new = self.gibbs_iteration(model_old)
@@ -241,7 +223,7 @@ class ModelSelectionSMC:
         """
         resample_indices = self.multinomial_draw()
         # Apply the metropolis step k times to each resampled particles
-        ancestors = numpy.repeat(None, self.particle_number)  # Initialize vector of new particles
+        ancestors = np.repeat(None, self.particle_number)  # Initialize vector of new particles
         if self.verbose:
             print("Doing Metropolis Resampling...")
         j = 0
@@ -267,7 +249,7 @@ class ModelSelectionSMC:
         Effects:
             Updates attributes 'w' and 'w_normalized'.
         """
-        self.w_log = self.w_hat_log + numpy.array([self.integrated_loglikes[get_model_id(model)][1] -
+        self.w_log = self.w_hat_log + np.array([self.integrated_loglikes[get_model_id(model)][1] -
                                                   self.integrated_loglikes[get_model_id(model)][0]
                                                   for model in self.particles])
         self.w_normalized = softmax(self.w_log)
@@ -294,7 +276,7 @@ class ModelSelectionSMC:
         Effects:
             Updates attribute 'logLt'.
         """
-        self.logLt += numpy.log(numpy.mean(numpy.exp(self.w_log)))
+        self.logLt += np.log(np.mean(np.exp(self.w_log)))
 
     def ess(self):
         """
@@ -318,17 +300,17 @@ class ModelSelectionSMC:
         if self.verbose:
             print('---SMC started---')
         self.sample_init(cut=0)
-        self.w_log = numpy.zeros(self.particle_number)
-        self.w_normalized = numpy.repeat(1 / self.particle_number, self.particle_number)
+        self.w_log = np.zeros(self.particle_number)
+        self.w_normalized = np.repeat(1 / self.particle_number, self.particle_number)
         if self.verbose:
             print('Iteration 1 done! The initial particles sampled.')
         while self.iteration < 10:  # change to unnormalized weights being close to 1
             self.iteration += 1
             if self.ess() < self.ess_min:
                 ancestor_idxs = self.resample()  # Get indexes of ancestors
-                self.w_hat_log = numpy.zeros(self.particle_number)
+                self.w_hat_log = np.zeros(self.particle_number)
             else:
-                ancestor_idxs = numpy.arange(self.particle_number)
+                ancestor_idxs = np.arange(self.particle_number)
                 self.w_hat_log = self.w_log
             self.particles = [self.gibbs_iteration(self.particles[ancestor_idx]) for ancestor_idx in ancestor_idxs]  # Update particles
             self.update_weights()  # Recalculate weights
@@ -341,29 +323,29 @@ class ModelSelectionSMC:
 if __name__ == '__main__':
     n_covariates = 30
     n_active = 3
-    beta_true = numpy.concatenate([numpy.zeros(n_covariates - n_active), numpy.ones(n_active)])
+    beta_true = np.concatenate([np.zeros(n_covariates - n_active), np.ones(n_active)])
     n = 1000
     rho = 0.0
-    sigma_x = numpy.diag([1.0] * n_covariates)
-    sigma_x[numpy.triu_indices(n_covariates, 1)] = rho
-    sigma_x[numpy.tril_indices(n_covariates, -1)] = rho
-    X = numpy.random.multivariate_normal(numpy.zeros(n_covariates), sigma_x, n)
-    p = 1 / (1 + numpy.exp(- X @ beta_true))
-    y = numpy.random.binomial(1, p, n)
+    sigma_x = np.diag([1.0] * n_covariates)
+    sigma_x[np.triu_indices(n_covariates, 1)] = rho
+    sigma_x[np.tril_indices(n_covariates, -1)] = rho
+    X = np.random.multivariate_normal(np.zeros(n_covariates), sigma_x, n)
+    p = 1 / (1 + np.exp(- X @ beta_true))
+    y = np.random.binomial(1, p, n)
     kernel = ModelKernel()
     particle_number = 500
-    model_init = numpy.array([False] * n_covariates)
-    model_init[numpy.random.choice(n_covariates)] = True
+    model_init = np.array([False] * n_covariates)
+    model_init[np.random.choice(n_covariates)] = True
 
     def db(linpred):
-        return 1 / (1 + numpy.exp(-linpred))
+        return 1 / (1 + np.exp(-linpred))
 
     def d2b(linpred):
-        p = 1 / (1 + numpy.exp(-linpred))
+        p = 1 / (1 + np.exp(-linpred))
         return p * (1 - p)
 
     smc = ModelSelectionSMC(X, y, likelihood=binomial_logit_logll, db=db, d2b=d2b,
-                            coef_init=numpy.array([0] * n_covariates), model_init=model_init, coef_prior=normal_prior,
+                            coef_init=np.array([0] * n_covariates), model_init=model_init, coef_prior=normal_prior,
                             kernel=kernel, kernel_steps=5, particle_number=particle_number, verbose=True)
     smc.run()
     sampled_models = Counter([get_model_id(model) for model in smc.particles])
