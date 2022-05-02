@@ -12,32 +12,14 @@ from scipy.special import softmax
 from copy import deepcopy
 from collections import Counter
 
-def get_model_id(model: np.ndarray):
-    """
-    Returns the binary number associated to a model
-    """
-    return int('0b' + ''.join((model * 1).astype(str)), 2)
+from .GLM import GLM, LogisticGLM
+from .utilities import get_model_id
 
-
-def binomial_logit_logll(y, linpred):
-    p = 1 / (1 + np.exp(-linpred))
-    if np.isclose(p, 0).any() or np.isclose(p, 1).any():
-        raise Exception("Exact 0 and 1 occur in the computed probabilities.")
-    return np.sum(y * np.log(p) + (1 - y) * np.log(1 - p))
-
-
-class GLM:
-    def __init__(self):
-        pass
-
-    @staticmethod
-    def gradient(Xt: np.ndarray, y: np.ndarray, db_dlinpred: np.ndarray):
-        return Xt @ (db_dlinpred - y)
-
-    @staticmethod
-    def hessian(X: np.ndarray, Xt: np.ndarray, d2b_dlinpred2: np.ndarray):
-        return (Xt * d2b_dlinpred2) @ X
-
+# def binomial_logit_logll(y, linpred):
+#     p = 1 / (1 + np.exp(-linpred))
+#     if np.isclose(p, 0).any() or np.isclose(p, 1).any():
+#         raise Exception("Exact 0 and 1 occur in the computed probabilities.")
+#     return np.sum(y * np.log(p) + (1 - y) * np.log(1 - p))
 
 class ApproxIntegral:
     def __init__(self):
@@ -114,16 +96,14 @@ class ModelSelectionSMC:
             logLt:           Logarithm of the estimated normalized constant, basically:         [float]
                              \sum_{s=0}^{t} log( \sum_{n=1}^{N} w_s^n ).
     """
-    def __init__(self, X: np.ndarray, y: np.ndarray, likelihood: callable, db: callable, d2b: callable,
+    def __init__(self, X: np.ndarray, y: np.ndarray, glm:GLM,
                  coef_init: np.array, model_init: np.array, coef_prior: callable, kernel: callable,
                  kernel_steps: int, particle_number: int, ess_min_ratio: float = 1/2, verbose: bool = False) -> None:
         self.X = X
         self.Xt = X.transpose()
         self.y = y
-        self.likelihood = likelihood
-        self.db = db
-        self.d2b = d2b
-        self.coef_init = coef_init
+        self.glm = glm
+        self.coef_init = coef_init #
         self.model_init = model_init
         self.kernel = kernel
         self.kernel_steps = kernel_steps
@@ -174,16 +154,16 @@ class ModelSelectionSMC:
         for iter in range(n_iterations): # TODO abstract this into a function
             coef_old = coef_new
             linpred_old = self.X[:, model] @ coef_old
-            db = self.db(linpred_old)  # 1 / (1 + np.exp(-linpred_old))
-            d2b = self.d2b(linpred_old)  # db * (1 - db)
-            gradient = GLM.gradient(self.Xt[model, :], self.y, db)
-            hessian = GLM.hessian(self.X[:, model], self.Xt[model, :], d2b)
+            db = self.glm.db(linpred_old) 
+            d2b = self.glm.d2b(linpred_old)
+            gradient = self.glm.gradient(self.Xt[model, :], self.y, db)
+            hessian = self.glm.hessian(self.X[:, model], self.Xt[model, :], d2b)
             hessian_inv = np.linalg.inv(hessian)
             coef_new = coef_old - hessian_inv @ gradient
             if n_iterations - iter <= 2:
                 integrated_loglike = ApproxIntegral.ala_log(self.y, linpred_old, coef_new,
                                                             gradient, hessian_inv,
-                                                            self.likelihood, self.coef_prior)
+                                                            self.glm.loglikelihood, self.coef_prior)
                 self.coefs[model_id][0] = self.coefs[model_id][1]
                 self.coefs[model_id][1] = coef_new
                 self.integrated_loglikes[model_id][0] = self.integrated_loglikes[model_id][1]
@@ -344,7 +324,7 @@ if __name__ == '__main__':
         p = 1 / (1 + np.exp(-linpred))
         return p * (1 - p)
 
-    smc = ModelSelectionSMC(X, y, likelihood=binomial_logit_logll, db=db, d2b=d2b,
+    smc = ModelSelectionSMC(X, y, glm=LogisticGLM,
                             coef_init=np.array([0] * n_covariates), model_init=model_init, coef_prior=normal_prior,
                             kernel=kernel, kernel_steps=5, particle_number=particle_number, verbose=True)
     smc.run()
