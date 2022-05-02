@@ -27,7 +27,7 @@ def easy_data():
     X, y, beta_true = create_data(n_covariates,n_active)
 
     kernel = ModelKernel()
-    particle_number = 500
+    particle_number = 1000
     model_init = np.array([False] * n_covariates)
     model_init[np.random.choice(n_covariates)] = True
 
@@ -55,3 +55,4 @@ def test_simple_inference(easy_data):
     true_model_id = get_model_id(beta_true != 0)
     selected_model_id = max(sampled_models, key=sampled_models.get)
     # print("Selected model: ", bin(selected_model_id)[2:])
+    assert true_model_id == selected_model_id
