@@ -3,10 +3,9 @@ from abc import ABC, abstractmethod
 import numpy as np
 
 class GLM(ABC):
-
     @staticmethod
     @abstractmethod
-    def loglikelihood(self, y, linpred):
+    def loglikelihood(y, linpred):
         pass
 
     @staticmethod

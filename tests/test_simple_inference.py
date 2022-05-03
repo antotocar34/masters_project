@@ -7,6 +7,8 @@ import numpy as np
 from alasmc.main import ModelSelectionSMC, ModelKernel, normal_prior
 from alasmc.GLM import LogisticGLM
 from alasmc.utilities import get_model_id
+from alasmc.optimization import newton_iteration
+
 
 def create_data(n_covariates, n_active):
     n_covariates = 5
@@ -33,7 +35,9 @@ def easy_data():
     model_init = np.array([False] * n_covariates)
     model_init[np.random.choice(n_covariates)] = True
 
-    smc = ModelSelectionSMC(X, y, glm=LogisticGLM,
+    smc = ModelSelectionSMC(X, y, 
+                            glm=LogisticGLM,
+                            optimization_procedure=newton_iteration,
                             coef_init=np.array([0] * n_covariates), model_init=model_init, coef_prior=normal_prior,
                             kernel=kernel, kernel_steps=5, particle_number=particle_number, verbose=True)
     return smc, beta_true
