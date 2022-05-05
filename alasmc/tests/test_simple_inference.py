@@ -38,6 +38,7 @@ def easy_data():
     smc = ModelSelectionSMC(X, y, 
                             glm=BinomialLogit,
                             optimization_procedure=newton_iteration,
+                            burnin=1000,
                             coef_init=np.array([0] * n_covariates), model_init=model_init, coef_prior=normal_prior,
                             kernel=kernel, kernel_steps=5, particle_number=particle_number, verbose=True)
     return smc, beta_true
