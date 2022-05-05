@@ -83,8 +83,9 @@ class ModelSelectionSMC(SMC):
             delta:           Defines lambda update, i.e. lambda_t - lambda_(t-1); is chosen     [float]
                              such that the updated sample maintains ESS_min.
             logLt:           Logarithm of the estimated normalized constant, basically:         [float]
-                             \sum_{s=0}^{t} log( \sum_{n=1}^{N} w_s^n ).
+                             sum_{s=0}^{t} log( sum_{n=1}^{N} w_s^n ).
     """
+
     def __init__(self, 
                  X: np.ndarray, 
                  y: np.ndarray, 
@@ -100,6 +101,7 @@ class ModelSelectionSMC(SMC):
                  tol_loglike: float = 10e-8,
                  maxit_smc: int = 40,
                  ess_min_ratio: float = 1/2, 
+                 tol_grad: float = 1e-8,
                  verbose: bool = False) -> None:
 
         super().__init__(
@@ -118,6 +120,8 @@ class ModelSelectionSMC(SMC):
         self.coef_init = coef_init
         self.model_init = model_init
         self.burnin = burnin
+        self.tol_grad = tol_grad # Let p_t = p_{t+1} once norm
+                                         # of gradient is smaller than this value.
 
         self.coef_prior = coef_prior  # This is the distribution that you start with.
         self.optimization_procedure = optimization_procedure
@@ -131,9 +135,13 @@ class ModelSelectionSMC(SMC):
         self.computed_at = {}  # Used to save the number of the latest iteration where the coefficients and LL were upd.
 
     def compute_integrated_loglike(self, model: np.ndarray):
+        converged = False
         model_id = get_model_id(model)
-        model_seen = True if self.computed_at.get(model_id, None) else False
+        model_seen = bool(self.computed_at.get(model_id, None))
         if model_seen:
+            if self.computed_at.get(model_id) == -1: # If it's converged, just return the latest
+                                                     # log-likelihood
+                return self.integrated_loglikes[model_id][1]
             n_iterations = self.iteration - self.computed_at[model_id]
             coef_new = self.coefs[model_id][1]
         else:
@@ -142,22 +150,29 @@ class ModelSelectionSMC(SMC):
             self.coefs[model_id] = [None, None] # TODO make this a mutable fixed size array?
             self.integrated_loglikes[model_id] = [None, None]
         integrated_loglike = self.integrated_loglikes[model_id][1]
+
         for iter in range(n_iterations): # TODO abstract this into a function
             coef_old = coef_new
             linpred_old = self.X[:, model] @ coef_old
             gradient = self.glm.gradient(self.Xt[model, :], self.y, linpred_old)
+
+
             hessian = self.glm.hessian(self.X[:, model], self.Xt[model, :], linpred_old)
             hessian_inv = np.linalg.inv(hessian)
             coef_new = self.optimization_procedure(coef_old, gradient, hessian_inv)
-            if n_iterations - iter <= 2:
+            if n_iterations - iter <= 2 or converged is True:
+                self.coefs[model_id][0] = self.coefs[model_id][1]
+                self.coefs[model_id][1] = coef_new
                 integrated_loglike = ApproxIntegral.ala_log(self.y, linpred_old, coef_new,
                                                             gradient, hessian_inv,
                                                             self.glm.loglikelihood, self.coef_prior)
-                self.coefs[model_id][0] = self.coefs[model_id][1]
-                self.coefs[model_id][1] = coef_new
                 self.integrated_loglikes[model_id][0] = self.integrated_loglikes[model_id][1]
                 self.integrated_loglikes[model_id][1] = integrated_loglike
-        self.computed_at[model_id] = self.iteration
+
+
+        if n_iterations != 0:
+            converged = np.linalg.norm(gradient) < self.tol_grad # Check for convergence of optimization problem. 
+        self.computed_at[model_id] = self.iteration if not converged else -1
         return integrated_loglike
 
     # Does this need to be part of the class?
@@ -255,6 +270,7 @@ if __name__ == '__main__':
     kernel = ModelKernel()
     particle_number = 1000
     model_init = np.array([False] * n_covariates)
+
     smc = ModelSelectionSMC(X, y,
                             glm=BinomialLogit,
                             optimization_procedure=newton_iteration,
