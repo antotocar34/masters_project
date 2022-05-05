@@ -12,10 +12,10 @@ from scipy.special import softmax
 from copy import deepcopy
 from collections import Counter
 
-from .smc import SMC
-from .GLM import GLM, LogisticGLM
-from .utilities import get_model_id
-from .optimization import newton_iteration
+from smc import SMC
+from GLM import GLM, LogisticGLM
+from utilities import get_model_id
+from optimization import newton_iteration
 
 class ApproxIntegral:
     @staticmethod
