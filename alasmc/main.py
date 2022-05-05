@@ -249,14 +249,6 @@ if __name__ == '__main__':
     kernel = ModelKernel()
     particle_number = 1000
     model_init = np.array([False] * n_covariates)
-
-    def db(linpred):
-        return 1 / (1 + np.exp(-linpred))
-
-    def d2b(linpred):
-        p = 1 / (1 + np.exp(-linpred))
-        return p * (1 - p)
-
     smc = ModelSelectionSMC(X, y,
                             glm=BinomialLogit,
                             optimization_procedure=newton_iteration,
