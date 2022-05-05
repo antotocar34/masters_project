@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
+
 class GLM(ABC):
     @staticmethod
     @abstractmethod
@@ -18,16 +19,16 @@ class GLM(ABC):
     def d2b(linpred):
         pass
 
-    @staticmethod
-    def gradient(Xt: np.ndarray, y: np.ndarray, db_dlinpred: np.ndarray):
-        return Xt @ (db_dlinpred - y)
+    @classmethod
+    def gradient(cls, Xt: np.ndarray, y: np.ndarray, linpred: np.ndarray):
+        return Xt @ (cls.db(linpred) - y)
 
-    @staticmethod
-    def hessian(X: np.ndarray, Xt: np.ndarray, d2b_dlinpred2: np.ndarray):
-        return (Xt * d2b_dlinpred2) @ X
+    @classmethod
+    def hessian(cls, X: np.ndarray, Xt: np.ndarray, linpred: np.ndarray):
+        return (Xt * cls.d2b(linpred)) @ X
 
 
-class LogisticGLM(GLM):
+class BinomialLogit(GLM):
     @staticmethod 
     def loglikelihood(y, linpred):
         p = 1 / (1 + np.exp(-linpred))

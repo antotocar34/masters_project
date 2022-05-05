@@ -1,4 +1,8 @@
 from abc import ABC, abstractmethod
+from scipy.stats import multinomial
+from collections import Counter
+from scipy.special import softmax
+import numpy as np
 
 class SMC(ABC):
     """

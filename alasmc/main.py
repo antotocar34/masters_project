@@ -13,9 +13,10 @@ from copy import deepcopy
 from collections import Counter
 
 from smc import SMC
-from GLM import GLM, LogisticGLM
+from GLM import GLM, BinomialLogit
 from utilities import get_model_id
 from optimization import newton_iteration
+
 
 class ApproxIntegral:
     @staticmethod
@@ -56,9 +57,6 @@ class ModelKernel:
         model_new = deepcopy(model_cur)
         i = np.random.choice(p)
         model_new[i] = not model_cur[i]
-        while not model_new.any():
-            i = np.random.choice(p)
-            model_new[i] = not model_cur[i]
         return model_new
 
 
@@ -90,23 +88,24 @@ class ModelSelectionSMC(SMC):
     def __init__(self, 
                  X: np.ndarray, 
                  y: np.ndarray, 
-                 glm:GLM,
+                 glm: GLM,
                  optimization_procedure: callable,
                  coef_init: np.array, 
-                 model_init: np.array, 
+                 model_init: np.array,
                  coef_prior: callable, 
                  kernel: callable,
-                 kernel_steps: int, 
+                 kernel_steps: int,
+                 burnin: int,
                  particle_number: int, 
                  ess_min_ratio: float = 1/2, 
                  verbose: bool = False) -> None:
 
         super().__init__(
-            kernel = kernel,
-            kernel_steps = kernel_steps,
-            particle_number = particle_number,
-            verbose = verbose,
-            ess_min_ratio = ess_min_ratio  # Papaspiliopoulos & Chopin states that the performance
+            kernel=kernel,
+            kernel_steps=kernel_steps,
+            particle_number=particle_number,
+            verbose=verbose,
+            ess_min_ratio=ess_min_ratio  # Papaspiliopoulos & Chopin states that the performance
         )
 
         self.X = X
@@ -115,6 +114,7 @@ class ModelSelectionSMC(SMC):
         self.glm = glm
         self.coef_init = coef_init #
         self.model_init = model_init
+        self.burnin = burnin
 
         self.coef_prior = coef_prior  # This is the distribution that you start with.
         self.optimization_procedure = optimization_procedure
@@ -127,7 +127,7 @@ class ModelSelectionSMC(SMC):
 
     def compute_integrated_loglike(self, model: np.ndarray):
         model_id = get_model_id(model)
-        model_seen = True if self.computed_at.get(model_id,None) else False
+        model_seen = True if self.computed_at.get(model_id, None) else False
         if model_seen:
             n_iterations = self.iteration - self.computed_at[model_id]
             coef_new = self.coefs[model_id][1]
@@ -140,10 +140,8 @@ class ModelSelectionSMC(SMC):
         for iter in range(n_iterations): # TODO abstract this into a function
             coef_old = coef_new
             linpred_old = self.X[:, model] @ coef_old
-            db = self.glm.db(linpred_old) 
-            d2b = self.glm.d2b(linpred_old)
-            gradient = self.glm.gradient(self.Xt[model, :], self.y, db)
-            hessian = self.glm.hessian(self.X[:, model], self.Xt[model, :], d2b)
+            gradient = self.glm.gradient(self.Xt[model, :], self.y, linpred_old)
+            hessian = self.glm.hessian(self.X[:, model], self.Xt[model, :], linpred_old)
             hessian_inv = np.linalg.inv(hessian)
             coef_new = self.optimization_procedure(coef_old, gradient, hessian_inv)
             if n_iterations - iter <= 2:
@@ -165,21 +163,21 @@ class ModelSelectionSMC(SMC):
             model_new = self.kernel.sample(model_old)  # Draw a new sample from kernel
             integrated_loglike_model_old = self.compute_integrated_loglike(model_old)
             integrated_loglike_model_new = self.compute_integrated_loglike(model_new)
-            accept_prob = np.exp(min(0, integrated_loglike_model_new - integrated_loglike_model_old))
+            accept_prob = 1 / (1 + np.exp(integrated_loglike_model_old - integrated_loglike_model_new))
             accept = np.random.binomial(1, accept_prob)
             model_new = model_new if accept else model_old
         return model_new
 
-    def sample_init(self, cut: int):
+    def sample_init(self):
         """
         Sample Inital Particles
         """
-        model_new = self.model_init # Todo abstract away
-        for i in range(self.particle_number + cut):
+        model_new = self.model_init  # Todo abstract away
+        for i in range(self.particle_number + self.burnin):
             model_old = model_new
             model_new = self.gibbs_iteration(model_old)
-            if i >= cut:
-                self.particles[i] = model_new
+            if (j := i - self.burnin) >= 0:
+                self.particles[j] = model_new
 
     def update_weights(self) -> None:
         """
@@ -194,9 +192,10 @@ class ModelSelectionSMC(SMC):
         Effects:
             Updates attributes 'w' and 'w_normalized'.
         """
-        self.w_log = self.w_hat_log + np.array([self.integrated_loglikes[get_model_id(model)][1] -
-                                                  self.integrated_loglikes[get_model_id(model)][0]
-                                                  for model in self.particles])
+        def diff(integrated_loglikes):
+            return integrated_loglikes[1] - integrated_loglikes[0]
+        self.w_log = self.w_hat_log + np.array([diff(self.integrated_loglikes[get_model_id(model)])
+                                                for model in self.particles])
         self.w_normalized = softmax(self.w_log)
 
     def run(self):
@@ -214,12 +213,12 @@ class ModelSelectionSMC(SMC):
         """
         if self.verbose:
             print('---SMC started---')
-        self.sample_init(cut=0)
+        self.sample_init()
         self.w_log = np.zeros(self.particle_number)
         self.w_normalized = np.repeat(1 / self.particle_number, self.particle_number)
         if self.verbose:
             print('Iteration 1 done! The initial particles sampled.')
-        while self.iteration < 10:  # change to unnormalized weights being close to 1
+        while self.iteration < 20:  # change to unnormalized weights being close to 1
             self.iteration += 1
             if self.ess() < self.ess_min:
                 ancestor_idxs = self.resample()  # Get indexes of ancestors
@@ -236,7 +235,7 @@ class ModelSelectionSMC(SMC):
 
 
 if __name__ == '__main__':
-    n_covariates = 30
+    n_covariates = 100
     n_active = 3
     beta_true = np.concatenate([np.zeros(n_covariates - n_active), np.ones(n_active)])
     n = 1000
@@ -248,9 +247,8 @@ if __name__ == '__main__':
     p = 1 / (1 + np.exp(- X @ beta_true))
     y = np.random.binomial(1, p, n)
     kernel = ModelKernel()
-    particle_number = 500
+    particle_number = 1000
     model_init = np.array([False] * n_covariates)
-    model_init[np.random.choice(n_covariates)] = True
 
     def db(linpred):
         return 1 / (1 + np.exp(-linpred))
@@ -259,9 +257,11 @@ if __name__ == '__main__':
         p = 1 / (1 + np.exp(-linpred))
         return p * (1 - p)
 
-    smc = ModelSelectionSMC(X, y, glm=LogisticGLM,
+    smc = ModelSelectionSMC(X, y,
+                            glm=BinomialLogit,
+                            optimization_procedure=newton_iteration,
                             coef_init=np.array([0] * n_covariates), model_init=model_init, coef_prior=normal_prior,
-                            kernel=kernel, kernel_steps=5, particle_number=particle_number, verbose=True)
+                            kernel=kernel, kernel_steps=1, burnin=10000, particle_number=particle_number, verbose=True)
     smc.run()
     sampled_models = Counter([get_model_id(model) for model in smc.particles])
     print(get_model_id(beta_true != 0))

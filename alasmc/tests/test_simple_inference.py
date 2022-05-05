@@ -5,7 +5,7 @@ from collections import Counter
 import numpy as np
 
 from alasmc.main import ModelSelectionSMC, ModelKernel, normal_prior
-from alasmc.GLM import LogisticGLM
+from alasmc.GLM import BinomialLogit
 from alasmc.utilities import get_model_id
 from alasmc.optimization import newton_iteration
 
@@ -36,11 +36,12 @@ def easy_data():
     model_init[np.random.choice(n_covariates)] = True
 
     smc = ModelSelectionSMC(X, y, 
-                            glm=LogisticGLM,
+                            glm=BinomialLogit,
                             optimization_procedure=newton_iteration,
                             coef_init=np.array([0] * n_covariates), model_init=model_init, coef_prior=normal_prior,
                             kernel=kernel, kernel_steps=5, particle_number=particle_number, verbose=True)
     return smc, beta_true
+
 
 # Simple test, 5 covariates, only one is significant.
 # Tests the functionality of the whole package on a very simple case.
@@ -55,3 +56,4 @@ def test_simple_inference(easy_data):
     selected_model_id = max(sampled_models, key=sampled_models.get)
     # print("Selected model: ", bin(selected_model_id)[2:])
     assert true_model_id == selected_model_id
+
