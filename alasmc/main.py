@@ -96,7 +96,9 @@ class ModelSelectionSMC(SMC):
                  kernel: callable,
                  kernel_steps: int,
                  burnin: int,
-                 particle_number: int, 
+                 particle_number: int,
+                 tol_loglike: float = 10e-8,
+                 maxit_smc: int = 40,
                  ess_min_ratio: float = 1/2, 
                  verbose: bool = False) -> None:
 
@@ -104,25 +106,28 @@ class ModelSelectionSMC(SMC):
             kernel=kernel,
             kernel_steps=kernel_steps,
             particle_number=particle_number,
-            verbose=verbose,
-            ess_min_ratio=ess_min_ratio  # Papaspiliopoulos & Chopin states that the performance
+            maxit_smc=maxit_smc,
+            ess_min_ratio=ess_min_ratio,
+            verbose=verbose
         )
 
         self.X = X
         self.Xt = X.transpose()
         self.y = y
         self.glm = glm
-        self.coef_init = coef_init #
+        self.coef_init = coef_init
         self.model_init = model_init
         self.burnin = burnin
 
         self.coef_prior = coef_prior  # This is the distribution that you start with.
         self.optimization_procedure = optimization_procedure
+        self.tol_loglike = tol_loglike
 
 
         self.coefs = {}  # Used to save computed coefficients for models. 
                          # TODO add type annotation to make clear what this dictionary is
         self.integrated_loglikes = {}  # Used to save integrated likelihoods for models.
+        self.integrated_loglike_changes = np.zeros(particle_number)
         self.computed_at = {}  # Used to save the number of the latest iteration where the coefficients and LL were upd.
 
     def compute_integrated_loglike(self, model: np.ndarray):
@@ -194,8 +199,9 @@ class ModelSelectionSMC(SMC):
         """
         def diff(integrated_loglikes):
             return integrated_loglikes[1] - integrated_loglikes[0]
-        self.w_log = self.w_hat_log + np.array([diff(self.integrated_loglikes[get_model_id(model)])
-                                                for model in self.particles])
+        self.integrated_loglike_changes[:] = np.array([diff(self.integrated_loglikes[get_model_id(model)])
+                                                       for model in self.particles])
+        self.w_log = self.w_hat_log + self.integrated_loglike_changes
         self.w_normalized = softmax(self.w_log)
 
     def run(self):
@@ -218,7 +224,7 @@ class ModelSelectionSMC(SMC):
         self.w_normalized = np.repeat(1 / self.particle_number, self.particle_number)
         if self.verbose:
             print('Iteration 1 done! The initial particles sampled.')
-        while self.iteration < 20:  # change to unnormalized weights being close to 1
+        while np.isclose(self.integrated_loglike_changes, 0, atol=self.tol_loglike).all() and self.iteration < self.maxit_smc:
             self.iteration += 1
             if self.ess() < self.ess_min:
                 ancestor_idxs = self.resample()  # Get indexes of ancestors
@@ -235,7 +241,7 @@ class ModelSelectionSMC(SMC):
 
 
 if __name__ == '__main__':
-    n_covariates = 100
+    n_covariates = 1000
     n_active = 3
     beta_true = np.concatenate([np.zeros(n_covariates - n_active), np.ones(n_active)])
     n = 1000
@@ -253,7 +259,7 @@ if __name__ == '__main__':
                             glm=BinomialLogit,
                             optimization_procedure=newton_iteration,
                             coef_init=np.array([0] * n_covariates), model_init=model_init, coef_prior=normal_prior,
-                            kernel=kernel, kernel_steps=1, burnin=10000, particle_number=particle_number, verbose=True)
+                            kernel=kernel, kernel_steps=1, burnin=5000, particle_number=particle_number, verbose=True)
     smc.run()
     sampled_models = Counter([get_model_id(model) for model in smc.particles])
     print(get_model_id(beta_true != 0))

@@ -27,13 +27,15 @@ class SMC(ABC):
     """
     def __init__(self, 
                  kernel: callable,
-                 kernel_steps: int, 
-                 particle_number: int, 
+                 kernel_steps: int,
+                 particle_number: int,
+                 maxit_smc: int = 40,
                  ess_min_ratio: float = 1/2, 
                  verbose: bool = False) -> None:
         self.kernel = kernel
         self.kernel_steps = kernel_steps
         self.particle_number = particle_number
+        self.maxit_smc = maxit_smc
         self.verbose = verbose
         self.ess_min = particle_number * ess_min_ratio  # Papaspiliopoulos & Chopin states that the performance
                                                         # of the algorithm is pretty robust to this choice.
@@ -152,12 +154,12 @@ class SMC(ABC):
         """
         if self.verbose:
             print('---SMC started---')
-        self.sample_init(cut=0)
+        self.sample_init()
         self.w_log = np.zeros(self.particle_number)
         self.w_normalized = np.repeat(1 / self.particle_number, self.particle_number)
         if self.verbose:
             print('Iteration 1 done! The initial particles sampled.')
-        while self.iteration < 10:  # change to unnormalized weights being close to 1
+        while self.iteration < self.maxit_smc:  # change to unnormalized weights being close to 1
             self.iteration += 1
             if self.ess() < self.ess_min:
                 ancestor_idxs = self.resample()  # Get indexes of ancestors
