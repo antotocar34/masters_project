@@ -3,16 +3,17 @@ import pytest
 from collections import Counter
 
 import numpy as np
+from scipy.spatial.distance import hamming
+
+from termcolor import colored
 
 from alasmc.main import ModelSelectionSMC, ModelKernel, normal_prior
 from alasmc.GLM import BinomialLogit
-from alasmc.utilities import get_model_id
+from alasmc.utilities import get_model_id, model_id_to_vector
 from alasmc.optimization import newton_iteration
 
 
 def create_data(n_covariates, n_active):
-    n_covariates = 5
-    n_active = 1
     beta_true = np.concatenate([np.zeros(n_covariates - n_active), np.ones(n_active)])
     n = 1000
     rho = 0.0
@@ -41,20 +42,34 @@ def easy_data():
                             burnin=1000,
                             coef_init=np.array([0] * n_covariates), model_init=model_init, coef_prior=normal_prior,
                             kernel=kernel, kernel_steps=5, particle_number=particle_number, verbose=True)
-    return smc, beta_true
+    return smc, beta_true, n_covariates
 
 
 # Simple test, 5 covariates, only one is significant.
 # Tests the functionality of the whole package on a very simple case.
-def test_simple_inference(easy_data):
-    smc, beta_true = easy_data
+@pytest.mark.parametrize('execution_number', range(5))
+def test_simple_inference(easy_data, capsys, execution_number):
+    smc, beta_true, n_covariates = easy_data
     smc.run()
     sampled_models = Counter([get_model_id(model) for model in smc.particles])
-    # print(get_model_id(beta_true != 0))
-    # print(smc.particles)
-    # print(sampled_models)
     true_model_id = get_model_id(beta_true != 0)
     selected_model_id = max(sampled_models, key=sampled_models.get)
-    # print("Selected model: ", bin(selected_model_id)[2:])
-    assert true_model_id == selected_model_id
+
+    true_gamma = model_id_to_vector(true_model_id, n_covariates)
+    selected_gamma = model_id_to_vector(selected_model_id, n_covariates)
+
+    equal = true_model_id == selected_model_id
+    subset = all([ 
+        selected_gamma[i] == b 
+        for (i, b) in enumerate(true_gamma) 
+        if b 
+        ])
+    with capsys.disabled():
+        if subset and not equal:
+            differences = np.sum(np.abs(true_gamma - selected_gamma))
+            print(colored("Number of spurious variables in most probable model: ", "green") + colored(differences, "yellow"))
+        if equal:
+            print(colored("Perfect match!", "green"))
+
+    assert equal or subset
 
