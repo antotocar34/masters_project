@@ -63,7 +63,7 @@ class SMC(ABC):
 
 
     @abstractmethod
-    def sample_init(self, cut: int):
+    def sample_init(self):
         """
         Sample Inital Particles.
         """
