@@ -8,28 +8,43 @@ import math
 import numpy as np
 from scipy.stats import multinomial
 from scipy.optimize import root_scalar
-from scipy.special import softmax
+from scipy.special import softmax, comb
 from copy import deepcopy
 from collections import Counter
 
 from smc import SMC
-from GLM import GLM, BinomialLogit
-from utilities import get_model_id
-from optimization import newton_iteration
+from glm import GLM, BinomialLogit
+from utilities import get_model_id, unzip, model_id_to_vector
+from optimization import NewtonRaphson
 
 
 class ApproxIntegral:
     @staticmethod
-    # version for GLMs
-    def ala_log(y, linpred_old, coef_new, gradient, hessian_inv, loglikelihood, coef_prior):
+    def ala_log(y: np.ndarray, linpred_old: np.ndarray, coef_new: np.ndarray, gradient: np.ndarray,
+                hessian_inv: np.ndarray, loglikelihood: callable, coef_prior_log: callable):
         p = len(coef_new)
-        return loglikelihood(y, linpred_old) + np.log(coef_prior(coef_new, p)) + (p / 2) * np.log(2 * np.pi) + \
+        return loglikelihood(y, linpred_old) + coef_prior_log(coef_new) + p / 2 * np.log(2 * np.pi) + \
                0.5 * np.log(np.linalg.det(hessian_inv)) + 0.5 * gradient.transpose() @ hessian_inv @ gradient
 
+    @staticmethod
+    def la_log(y: np.ndarray, X: np.ndarray, Xt: np.ndarray, coef_init: np.ndarray, loglikelihood: callable,
+               coef_prior_log: callable, gradient: callable, hessian: callable, tol_grad: float):
+        p = len(coef_init)
+        coef, linpred, _, hessian_inv = NewtonRaphson.optimize(y, X, Xt, coef_init, gradient, hessian, tol_grad)
+        return loglikelihood(y, linpred) + coef_prior_log(coef) + (p / 2) * np.log(2 * np.pi) + 0.5 * \
+               np.log(np.linalg.det(hessian_inv))
 
-# Here we set default g = 1. In fact, we might also think about adding rho parameter
-def normal_prior(beta: np.ndarray, p: int, g=1):
-    return 1 / (2 * np.pi * g)**(p / 2) * np.exp(- 1 / g * beta.dot(beta) / 2)
+
+# Here we set default g = 1. In fact, we might also think about adding rho parameter.
+def normal_prior_log(beta: np.ndarray, g=1):
+    p = len(beta)
+    return -1 / 2 * (p * np.log(2 * np.pi * g) + 1 / g * beta.dot(beta))
+
+
+def beta_binomial_prior(model: np.ndarray):
+    p_model = sum(model)
+    p = len(model)
+    return 1 / (p + 1) / comb(p, p_model)
 
 
 class ModelKernel:
@@ -86,21 +101,22 @@ class ModelSelectionSMC(SMC):
                              sum_{s=0}^{t} log( sum_{n=1}^{N} w_s^n ).
     """
 
-    def __init__(self, 
-                 X: np.ndarray, 
-                 y: np.ndarray, 
+    def __init__(self,
+                 X: np.ndarray,
+                 y: np.ndarray,
                  glm: GLM,
                  optimization_procedure: callable,
-                 coef_init: np.array, 
+                 coef_init: np.array,
                  model_init: np.array,
-                 coef_prior: callable, 
+                 coef_prior: callable,
+                 model_prior: callable,
                  kernel: callable,
                  kernel_steps: int,
                  burnin: int,
                  particle_number: int,
-                 tol_loglike: float = 10e-8,
+                 tol_loglike: float = 10e-2,
                  maxit_smc: int = 40,
-                 ess_min_ratio: float = 1/2, 
+                 ess_min_ratio: float = 0.5,
                  tol_grad: float = 1e-8,
                  verbose: bool = False) -> None:
 
@@ -119,48 +135,50 @@ class ModelSelectionSMC(SMC):
         self.glm = glm
         self.coef_init = coef_init
         self.model_init = model_init
+        self.particle_ids = np.zeros(particle_number)
         self.burnin = burnin
-        self.tol_grad = tol_grad # Let p_t = p_{t+1} once norm
-                                         # of gradient is smaller than this value.
-
-        self.coef_prior = coef_prior  # This is the distribution that you start with.
+        self.tol_grad = tol_grad  # Let p_t = p_{t+1} once norm of gradient is smaller than this value.
+        self.coef_prior = coef_prior
+        self.model_prior = model_prior
         self.optimization_procedure = optimization_procedure
         self.tol_loglike = tol_loglike
-
-
         self.coefs = {}  # Used to save computed coefficients for models. 
                          # TODO add type annotation to make clear what this dictionary is
         self.integrated_loglikes = {}  # Used to save integrated likelihoods for models.
-        self.integrated_loglike_changes = np.zeros(particle_number)
+        self.integrated_loglike_changes = np.repeat(np.nan, particle_number)
         self.computed_at = {}  # Used to save the number of the latest iteration where the coefficients and LL were upd.
+        self.postProb = {}
+        self.marginal_postProb = None
+        self.postMode = None
 
-    def compute_integrated_loglike(self, model: np.ndarray):
+    def compute_integrated_loglike(self, model: np.ndarray, model_id: int):
         converged = False
-        model_id = get_model_id(model)
-        model_seen = bool(self.computed_at.get(model_id, None))
-        if model_seen:
-            if self.computed_at.get(model_id) == -1: # If it's converged, just return the latest
-                                                     # log-likelihood
-                return self.integrated_loglikes[model_id][1]
+        computed_at = self.computed_at.get(model_id, None)
+        if computed_at == -1:  # If it's converged, just return the latest log-likelihood
+            return self.integrated_loglikes[model_id][1]
+        elif computed_at:
             n_iterations = self.iteration - self.computed_at[model_id]
             coef_new = self.coefs[model_id][1]
         else:
             n_iterations = self.iteration
             coef_new = self.coef_init[model]
-            self.coefs[model_id] = [None, None] # TODO make this a mutable fixed size array?
+            self.coefs[model_id] = [None, None]
             self.integrated_loglikes[model_id] = [None, None]
         integrated_loglike = self.integrated_loglikes[model_id][1]
 
-        for iter in range(n_iterations): # TODO abstract this into a function
+        for iter in range(n_iterations):
             coef_old = coef_new
             linpred_old = self.X[:, model] @ coef_old
-            gradient = self.glm.gradient(self.Xt[model, :], self.y, linpred_old)
-
-
-            hessian = self.glm.hessian(self.X[:, model], self.Xt[model, :], linpred_old)
-            hessian_inv = np.linalg.inv(hessian)
-            coef_new = self.optimization_procedure(coef_old, gradient, hessian_inv)
-            if n_iterations - iter <= 2 or converged is True:
+            if isinstance(self.optimization_procedure, NewtonRaphson):
+                coef_new, gradient, hessian_inv = self.optimization_procedure.iteration(self.y,
+                                                                                        self.X[:, model],
+                                                                                        self.Xt[model, :],
+                                                                                        coef_old,
+                                                                                        linpred_old,
+                                                                                        self.glm)
+            else:
+                raise NotImplementedError("Only Newton method is implemented at the moment.")
+            if n_iterations - iter <= 2:
                 self.coefs[model_id][0] = self.coefs[model_id][1]
                 self.coefs[model_id][1] = coef_new
                 integrated_loglike = ApproxIntegral.ala_log(self.y, linpred_old, coef_new,
@@ -169,35 +187,50 @@ class ModelSelectionSMC(SMC):
                 self.integrated_loglikes[model_id][0] = self.integrated_loglikes[model_id][1]
                 self.integrated_loglikes[model_id][1] = integrated_loglike
 
-
-        if n_iterations != 0:
-            converged = np.linalg.norm(gradient) < self.tol_grad # Check for convergence of optimization problem. 
+        if n_iterations != 0 and len(gradient) != 0:
+            converged = sum(gradient**2) / len(gradient) < self.tol_grad  # Check for convergence of optimization problem.
+        if not model.any():
+            converged = True
         self.computed_at[model_id] = self.iteration if not converged else -1
         return integrated_loglike
 
-    # Does this need to be part of the class?
+    # Does this need to be part of the class? ANSWER: It does not. We'll create another script with kernels.
     def gibbs_iteration(self, model: np.ndarray):
         model_new = model
+        model_id_new = get_model_id(model_new)
         for _ in range(self.kernel_steps):
             model_old = model_new
+            model_id_old = model_id_new
             model_new = self.kernel.sample(model_old)  # Draw a new sample from kernel
-            integrated_loglike_model_old = self.compute_integrated_loglike(model_old)
-            integrated_loglike_model_new = self.compute_integrated_loglike(model_new)
-            accept_prob = 1 / (1 + np.exp(integrated_loglike_model_old - integrated_loglike_model_new))
-            accept = np.random.binomial(1, accept_prob)
+            model_id_new = get_model_id(model_new)
+            postLLRatio = self.compute_integrated_loglike(model_old, model_id_old) + self.model_prior(model_old) - \
+                self.compute_integrated_loglike(model_new, model_id_new) - self.model_prior(model_new)
+            uniform = np.random.uniform(0, 1)
+            if uniform <= 10e-200:  # For the sake of dealing with overflow.
+                accept = False
+            else:
+                accept = np.log(1 / uniform - 1) >= postLLRatio
             model_new = model_new if accept else model_old
-        return model_new
+            model_id_new = model_id_new if accept else model_id_old
+        return model_id_new, model_new
 
     def sample_init(self):
         """
-        Sample Inital Particles
+        Sample Initial Particles
         """
         model_new = self.model_init  # Todo abstract away
+        model_new_id = get_model_id(model_new)
         for i in range(self.particle_number + self.burnin):
-            model_old = model_new
-            model_new = self.gibbs_iteration(model_old)
+            model_old_id, model_old = model_new_id, model_new
+            model_new_id, model_new = self.gibbs_iteration(model_old)
             if (j := i - self.burnin) >= 0:
+                self.particle_ids[j] = model_new_id
                 self.particles[j] = model_new
+
+    def move(self, ancestor_idxs: np.array):
+        particle_ids, particles = unzip([self.gibbs_iteration(self.particles[ancestor_idx])
+                                         for ancestor_idx in ancestor_idxs])
+        self.particle_ids, self.particles = np.array(particle_ids), np.array(particles)
 
     def update_weights(self) -> None:
         """
@@ -212,12 +245,18 @@ class ModelSelectionSMC(SMC):
         Effects:
             Updates attributes 'w' and 'w_normalized'.
         """
-        def diff(integrated_loglikes):
+        def change(integrated_loglikes):
             return integrated_loglikes[1] - integrated_loglikes[0]
-        self.integrated_loglike_changes[:] = np.array([diff(self.integrated_loglikes[get_model_id(model)])
-                                                       for model in self.particles])
+        self.integrated_loglike_changes = np.array([change(self.integrated_loglikes[get_model_id(model)])
+                                                    for model in self.particles])
         self.w_log = self.w_hat_log + self.integrated_loglike_changes
         self.w_normalized = softmax(self.w_log)
+
+    def compute_postProb(self):
+        postProb = {}
+        for id in np.unique(self.particle_ids):
+            postProb[id] = sum(self.w_normalized[self.particle_ids == id])
+        return postProb
 
     def run(self):
         """
@@ -239,7 +278,7 @@ class ModelSelectionSMC(SMC):
         self.w_normalized = np.repeat(1 / self.particle_number, self.particle_number)
         if self.verbose:
             print('Iteration 1 done! The initial particles sampled.')
-        while np.isclose(self.integrated_loglike_changes, 0, atol=self.tol_loglike).all() and self.iteration < self.maxit_smc:
+        while not np.allclose(self.integrated_loglike_changes, 0, atol=self.tol_loglike) and self.iteration < self.maxit_smc:
             self.iteration += 1
             if self.ess() < self.ess_min:
                 ancestor_idxs = self.resample()  # Get indexes of ancestors
@@ -247,16 +286,19 @@ class ModelSelectionSMC(SMC):
             else:
                 ancestor_idxs = np.arange(self.particle_number)
                 self.w_hat_log = self.w_log
-            self.particles = [self.gibbs_iteration(self.particles[ancestor_idx]) for ancestor_idx in ancestor_idxs]  # Update particles
+            self.move(ancestor_idxs)
             self.update_weights()  # Recalculate weights
             if self.verbose:
                 print(f"Iteration {self.iteration} done!")
+        self.postProb = self.compute_postProb()
+        self.marginal_postProb = self.w_normalized @ self.particles
+        self.postMode = model_id_to_vector(max(self.postProb, key=self.postProb.get), len(self.marginal_postProb))
         if self.verbose:
             print('---SMC finished---\n')
 
 
 if __name__ == '__main__':
-    n_covariates = 1000
+    n_covariates = 100
     n_active = 3
     beta_true = np.concatenate([np.zeros(n_covariates - n_active), np.ones(n_active)])
     n = 1000
@@ -273,13 +315,15 @@ if __name__ == '__main__':
 
     smc = ModelSelectionSMC(X, y,
                             glm=BinomialLogit,
-                            optimization_procedure=newton_iteration,
-                            coef_init=np.array([0] * n_covariates), model_init=model_init, coef_prior=normal_prior,
-                            kernel=kernel, kernel_steps=1, burnin=5000, particle_number=particle_number, verbose=True)
+                            optimization_procedure=NewtonRaphson(),  # brackets are important
+                            coef_init=np.array([0] * n_covariates), model_init=model_init, coef_prior=normal_prior_log,
+                            model_prior=beta_binomial_prior, kernel=kernel, kernel_steps=1, burnin=5000,
+                            particle_number=particle_number, verbose=True)
     smc.run()
-    sampled_models = Counter([get_model_id(model) for model in smc.particles])
-    print(get_model_id(beta_true != 0))
+    print(smc.marginal_postProb, smc.postMode)
+    # sampled_models = Counter([get_model_id(model) for model in smc.particles])
+    # print(get_model_id(beta_true != 0))
     # print(smc.particles)
-    print(sampled_models)
-    selected_model_id = max(sampled_models, key=sampled_models.get)
-    print("Selected model: ", bin(selected_model_id)[2:])
+    # print(sampled_models)
+    # selected_model_id = max(sampled_models, key=sampled_models.get)
+    # print("Selected model: ", bin(selected_model_id)[2:])

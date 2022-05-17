@@ -4,6 +4,7 @@ import numpy as np
 
 
 class GLM(ABC):
+
     @staticmethod
     @abstractmethod
     def loglikelihood(y, linpred):
@@ -29,6 +30,7 @@ class GLM(ABC):
 
 
 class BinomialLogit(GLM):
+
     @staticmethod 
     def loglikelihood(y, linpred):
         p = 1 / (1 + np.exp(-linpred))

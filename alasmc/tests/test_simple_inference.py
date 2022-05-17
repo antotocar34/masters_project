@@ -8,7 +8,7 @@ from scipy.spatial.distance import hamming
 from termcolor import colored
 
 from alasmc.main import ModelSelectionSMC, ModelKernel, normal_prior
-from alasmc.GLM import BinomialLogit
+from alasmc.glm import BinomialLogit
 from alasmc.utilities import get_model_id, model_id_to_vector
 from alasmc.optimization import newton_iteration
 
