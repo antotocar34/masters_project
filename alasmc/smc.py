@@ -4,6 +4,7 @@ from collections import Counter
 from scipy.special import softmax
 import numpy as np
 
+
 class SMC(ABC):
     """
         ...
@@ -41,7 +42,7 @@ class SMC(ABC):
                                                         # of the algorithm is pretty robust to this choice.
         # Initializing useful quantities for later
         self.iteration = 1  # Tracks the t variable
-        self.particles = [None] * self.particle_number # Make into np array?
+        self.particles = [None] * self.particle_number  # Make into np array?
         self.w_log = None  # unnormalized logweights
         self.w_normalized = None  # normalized weights
         self.w_hat_log = None  # reweighing multipliers

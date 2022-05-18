@@ -12,10 +12,10 @@ from scipy.special import softmax, comb
 from copy import deepcopy
 from collections import Counter
 
-from smc import SMC
-from glm import GLM, BinomialLogit
-from utilities import get_model_id, unzip, model_id_to_vector
-from optimization import NewtonRaphson
+from .smc import SMC
+from .glm import GLM, BinomialLogit
+from .utilities import get_model_id, unzip, model_id_to_vector
+from .optimization import NewtonRaphson
 
 
 class ApproxIntegral:
@@ -28,9 +28,11 @@ class ApproxIntegral:
 
     @staticmethod
     def la_log(y: np.ndarray, X: np.ndarray, Xt: np.ndarray, coef_init: np.ndarray, loglikelihood: callable,
-               coef_prior_log: callable, gradient: callable, hessian: callable, tol_grad: float):
+               coef_prior_log: callable, gradient_func: callable, hessian_func: callable, tol_grad: float):
         p = len(coef_init)
-        coef, linpred, _, hessian_inv = NewtonRaphson.optimize(y, X, Xt, coef_init, gradient, hessian, tol_grad)
+        if p == 0:
+            return loglikelihood(y, X @ coef_init)
+        coef, linpred, _, hessian_inv = NewtonRaphson.optimize(y, X, Xt, coef_init, gradient_func, hessian_func, tol_grad)
         return loglikelihood(y, linpred) + coef_prior_log(coef) + (p / 2) * np.log(2 * np.pi) + 0.5 * \
                np.log(np.linalg.det(hessian_inv))
 
@@ -41,10 +43,10 @@ def normal_prior_log(beta: np.ndarray, g=1):
     return -1 / 2 * (p * np.log(2 * np.pi * g) + 1 / g * beta.dot(beta))
 
 
-def beta_binomial_prior(model: np.ndarray):
+def beta_binomial_prior_log(model: np.ndarray):
     p_model = sum(model)
     p = len(model)
-    return 1 / (p + 1) / comb(p, p_model)
+    return - np.log(p + 1) - np.log(comb(p, p_model))
 
 
 class ModelKernel:
@@ -108,13 +110,13 @@ class ModelSelectionSMC(SMC):
                  optimization_procedure: callable,
                  coef_init: np.array,
                  model_init: np.array,
-                 coef_prior: callable,
-                 model_prior: callable,
+                 coef_prior_log: callable,
+                 model_prior_log: callable,
                  kernel: callable,
                  kernel_steps: int,
                  burnin: int,
                  particle_number: int,
-                 tol_loglike: float = 10e-2,
+                 tol_loglike: float = 10e-5,
                  maxit_smc: int = 40,
                  ess_min_ratio: float = 0.5,
                  tol_grad: float = 1e-8,
@@ -138,8 +140,8 @@ class ModelSelectionSMC(SMC):
         self.particle_ids = np.zeros(particle_number)
         self.burnin = burnin
         self.tol_grad = tol_grad  # Let p_t = p_{t+1} once norm of gradient is smaller than this value.
-        self.coef_prior = coef_prior
-        self.model_prior = model_prior
+        self.coef_prior_log = coef_prior_log
+        self.model_prior_log = model_prior_log
         self.optimization_procedure = optimization_procedure
         self.tol_loglike = tol_loglike
         self.coefs = {}  # Used to save computed coefficients for models. 
@@ -175,7 +177,8 @@ class ModelSelectionSMC(SMC):
                                                                                         self.Xt[model, :],
                                                                                         coef_old,
                                                                                         linpred_old,
-                                                                                        self.glm)
+                                                                                        self.glm.gradient,
+                                                                                        self.glm.hessian)
             else:
                 raise NotImplementedError("Only Newton method is implemented at the moment.")
             if n_iterations - iter <= 2:
@@ -183,7 +186,7 @@ class ModelSelectionSMC(SMC):
                 self.coefs[model_id][1] = coef_new
                 integrated_loglike = ApproxIntegral.ala_log(self.y, linpred_old, coef_new,
                                                             gradient, hessian_inv,
-                                                            self.glm.loglikelihood, self.coef_prior)
+                                                            self.glm.loglikelihood, self.coef_prior_log)
                 self.integrated_loglikes[model_id][0] = self.integrated_loglikes[model_id][1]
                 self.integrated_loglikes[model_id][1] = integrated_loglike
 
@@ -203,8 +206,8 @@ class ModelSelectionSMC(SMC):
             model_id_old = model_id_new
             model_new = self.kernel.sample(model_old)  # Draw a new sample from kernel
             model_id_new = get_model_id(model_new)
-            postLLRatio = self.compute_integrated_loglike(model_old, model_id_old) + self.model_prior(model_old) - \
-                self.compute_integrated_loglike(model_new, model_id_new) - self.model_prior(model_new)
+            postLLRatio = self.compute_integrated_loglike(model_old, model_id_old) + self.model_prior_log(model_old) - \
+                self.compute_integrated_loglike(model_new, model_id_new) - self.model_prior_log(model_new)
             uniform = np.random.uniform(0, 1)
             if uniform <= 10e-200:  # For the sake of dealing with overflow.
                 accept = False
@@ -298,7 +301,7 @@ class ModelSelectionSMC(SMC):
 
 
 if __name__ == '__main__':
-    n_covariates = 100
+    n_covariates = 15
     n_active = 3
     beta_true = np.concatenate([np.zeros(n_covariates - n_active), np.ones(n_active)])
     n = 1000
@@ -316,8 +319,8 @@ if __name__ == '__main__':
     smc = ModelSelectionSMC(X, y,
                             glm=BinomialLogit,
                             optimization_procedure=NewtonRaphson(),  # brackets are important
-                            coef_init=np.array([0] * n_covariates), model_init=model_init, coef_prior=normal_prior_log,
-                            model_prior=beta_binomial_prior, kernel=kernel, kernel_steps=1, burnin=5000,
+                            coef_init=np.array([0] * n_covariates), model_init=model_init, coef_prior_log=normal_prior_log,
+                            model_prior_log=beta_binomial_prior_log, kernel=kernel, kernel_steps=1, burnin=5000,
                             particle_number=particle_number, verbose=True)
     smc.run()
     print(smc.marginal_postProb, smc.postMode)

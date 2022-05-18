@@ -2,8 +2,9 @@ import numpy
 import abc
 
 from multipledispatch import dispatch
-from glm import GLM
 from collections.abc import Callable
+
+from .glm import GLM
 
 
 class NewtonRaphson:
@@ -25,15 +26,15 @@ class NewtonRaphson:
     @staticmethod
     @dispatch(numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, Callable, Callable)
     def iteration(y: numpy.ndarray, X: numpy.ndarray, Xt: numpy.ndarray, coef: numpy.ndarray, linpred: numpy.ndarray,
-                  gradient: callable, hessian):
-        gradient = gradient(Xt, y, linpred)
-        hessian = hessian(X, Xt, linpred)
+                  gradient_func: Callable, hessian_func: Callable):
+        gradient = gradient_func(Xt, y, linpred)
+        hessian = hessian_func(X, Xt, linpred)
         hessian_inv = numpy.linalg.inv(hessian)
         coef = coef - hessian_inv @ gradient
         return coef, gradient, hessian_inv
 
     @staticmethod
-    @dispatch(numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, object, float, int)
+    @dispatch(numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, object, float, maxit=int)
     def optimize(y: numpy.ndarray, X: numpy.ndarray, Xt: numpy.ndarray, coef_init: numpy.ndarray, glm: GLM,
                  tol_grad: float, maxit: int = 300):
         coef = coef_init
@@ -51,19 +52,19 @@ class NewtonRaphson:
         return coef, linpred, gradient, hessian_inv
 
     @staticmethod
-    @dispatch(numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, Callable, Callable, float, int)
-    def optimize(y: numpy.ndarray, X: numpy.ndarray, Xt: numpy.ndarray, coef_init: numpy.ndarray, gradient: callable,
-                 hessian: callable, tol_grad: float, maxit: int = 300):
+    @dispatch(numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, Callable, Callable, float, maxit=int)
+    def optimize(y: numpy.ndarray, X: numpy.ndarray, Xt: numpy.ndarray, coef_init: numpy.ndarray, gradient_func: Callable,
+                 hessian_func: Callable, tol_grad: float, maxit: int = 300):
         coef = coef_init
         linpred = X @ coef
-        gradient = gradient(Xt, y, linpred)
+        gradient = gradient_func(Xt, y, linpred)
         iteration = 0
         while sum(gradient**2) / len(gradient) >= tol_grad and iteration < maxit:
-            coef, gradient, _ = NewtonRaphson.iteration(y, X, Xt, coef, linpred, gradient, hessian)
+            coef, gradient, _ = NewtonRaphson.iteration(y, X, Xt, coef, linpred, gradient_func, hessian_func)
             linpred = X @ coef
             iteration += 1
             if iteration == maxit:
                 print("Newton method has not converged hitting the maximum number of iterations: ", maxit)
-        hessian = hessian(X, Xt, linpred)
+        hessian = hessian_func(X, Xt, linpred)
         hessian_inv = numpy.linalg.inv(hessian)
         return coef, linpred, gradient, hessian_inv
