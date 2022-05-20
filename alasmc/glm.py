@@ -20,6 +20,11 @@ class GLM(ABC):
     def d2b(linpred):
         pass
 
+    @staticmethod
+    @abstractmethod
+    def sample(X: np.ndarray, beta_true: np.ndarray):
+        ...
+
     @classmethod
     def gradient(cls, Xt: np.ndarray, y: np.ndarray, linpred: np.ndarray):
         return Xt @ (cls.db(linpred) - y)
@@ -30,6 +35,13 @@ class GLM(ABC):
 
 
 class BinomialLogit(GLM):
+
+    @staticmethod
+    def sample(X: np.ndarray, beta_true: np.ndarray):
+        p = 1 / (1 + np.exp(- X @ beta_true))
+        n = X.shape[0]
+        y = np.random.binomial(1, p, n)
+        return y
 
     @staticmethod 
     def loglikelihood(y, linpred):

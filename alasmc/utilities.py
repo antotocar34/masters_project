@@ -25,3 +25,15 @@ def create_model_matrix(X: np.ndarray):
         model_matrix[model_id, ] = np.array(list(model_str), dtype=int)
         model_matrix = model_matrix == 1
     return model_matrix
+
+
+def create_data(n: int, n_covariates: int, n_active: int, rho: float, model: object):
+    beta_true = np.concatenate([np.zeros(n_covariates - n_active), np.ones(n_active)])
+    n = n
+    rho = rho
+    sigma_x = np.diag([1.0] * n_covariates)
+    sigma_x[np.triu_indices(n_covariates, 1)] = rho
+    sigma_x[np.tril_indices(n_covariates, -1)] = rho
+    X = np.random.multivariate_normal(np.zeros(n_covariates), sigma_x, n)
+    y = model.sample(X, beta_true)
+    return X, y, beta_true

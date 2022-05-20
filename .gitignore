@@ -5,3 +5,5 @@ pyproject.toml
 /*.egg-info
 __pycache__
 .envrc
+experiments/.ipynb_checkpoints
+experiments/Untitled.ipynb

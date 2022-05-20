@@ -14,7 +14,7 @@ from collections import Counter
 
 from .smc import SMC
 from .glm import GLM, BinomialLogit
-from .utilities import get_model_id, unzip, model_id_to_vector
+from .utilities import get_model_id, unzip, model_id_to_vector, create_model_matrix
 from .optimization import NewtonRaphson
 
 
@@ -116,10 +116,10 @@ class ModelSelectionSMC(SMC):
                  kernel_steps: int,
                  burnin: int,
                  particle_number: int,
-                 tol_loglike: float = 10e-5,
+                 tol_loglike: float = 1e-12,
                  maxit_smc: int = 40,
                  ess_min_ratio: float = 0.5,
-                 tol_grad: float = 1e-8,
+                 tol_grad: float = 1e-13,
                  verbose: bool = False) -> None:
 
         super().__init__(
@@ -157,6 +157,8 @@ class ModelSelectionSMC(SMC):
         converged = False
         computed_at = self.computed_at.get(model_id, None)
         if computed_at == -1:  # If it's converged, just return the latest log-likelihood
+            if self.integrated_loglikes[model_id][0] != self.integrated_loglikes[model_id][1]:
+                self.integrated_loglikes[model_id][0] = self.integrated_loglikes[model_id][1]
             return self.integrated_loglikes[model_id][1]
         elif computed_at:
             n_iterations = self.iteration - self.computed_at[model_id]
@@ -190,10 +192,10 @@ class ModelSelectionSMC(SMC):
                 self.integrated_loglikes[model_id][0] = self.integrated_loglikes[model_id][1]
                 self.integrated_loglikes[model_id][1] = integrated_loglike
 
-        if n_iterations != 0 and len(gradient) != 0:
-            converged = sum(gradient**2) / len(gradient) < self.tol_grad  # Check for convergence of optimization problem.
         if not model.any():
             converged = True
+        elif n_iterations != 0:
+            converged = sum(gradient**2) / len(gradient) < self.tol_grad  # Check for convergence of optimization problem.
         self.computed_at[model_id] = self.iteration if not converged else -1
         return integrated_loglike
 
@@ -209,7 +211,7 @@ class ModelSelectionSMC(SMC):
             postLLRatio = self.compute_integrated_loglike(model_old, model_id_old) + self.model_prior_log(model_old) - \
                 self.compute_integrated_loglike(model_new, model_id_new) - self.model_prior_log(model_new)
             uniform = np.random.uniform(0, 1)
-            if uniform <= 10e-200:  # For the sake of dealing with overflow.
+            if uniform <= 1e-200:  # For the sake of dealing with overflow.
                 accept = False
             else:
                 accept = np.log(1 / uniform - 1) >= postLLRatio
@@ -293,11 +295,70 @@ class ModelSelectionSMC(SMC):
             self.update_weights()  # Recalculate weights
             if self.verbose:
                 print(f"Iteration {self.iteration} done!")
+        if self.iteration == self.maxit_smc:
+            print("SMC hits the pre-specified maximum of iterations.")
         self.postProb = self.compute_postProb()
         self.marginal_postProb = self.w_normalized @ self.particles
         self.postMode = model_id_to_vector(max(self.postProb, key=self.postProb.get), len(self.marginal_postProb))
         if self.verbose:
             print('---SMC finished---\n')
+
+
+class ModelSelectionLA:
+    def __init__(self, X: np.ndarray,
+                 y: np.ndarray,
+                 glm: GLM,
+                 optimization_procedure: object,
+                 coef_init: np.array,
+                 coef_prior_log: callable,
+                 model_prior_log: callable,
+                 # kernel: callable,
+                 # kernel_steps: int,
+                 # burnin: int,
+                 full_enumeration: bool = True,
+                 tol_grad: float = 1e-13):
+        self.X = X
+        self.Xt = X.transpose()
+        self.y = y
+        self.glm = glm
+        self.optimization_procedure = optimization_procedure
+        self.coef_init = coef_init
+        self.coef_prior_log = coef_prior_log
+        self.model_prior_log = model_prior_log
+        # self.kernel = kernel
+        # self.kernel_steps = kernel_steps
+        # self.burnin = burnin
+        self.full_enumeration = full_enumeration
+        self.tol_grad = tol_grad  # Let p_t = p_{t+1} once norm of gradient is smaller than this value.
+        self.integrated_loglikes = None
+        self.postProb = None
+        self.marginal_postProb = None
+        self.postMode = None
+        self.model_matrix = None
+
+    def _run_enumeration(self):
+        p_full = self.X.shape[1]
+        self.integrated_loglikes = np.repeat(np.nan, 2**p_full)
+        self.postProb = np.repeat(np.nan, 2**p_full)
+        self.marginal_postProb = np.repeat(np.nan, p_full)
+        self.model_matrix = create_model_matrix(self.X)
+        for model_id in range(2**p_full):
+            model = self.model_matrix[model_id, :]
+            coef_init = self.coef_init[model]
+            self.integrated_loglikes[model_id] = ApproxIntegral.la_log(self.y, self.X[:, model], self.Xt[model, :],
+                                                                       coef_init, self.glm.loglikelihood,
+                                                                       self.coef_prior_log, self.glm.gradient,
+                                                                       self.glm.hessian, self.tol_grad)
+            self.postProb[model_id] = np.exp(self.integrated_loglikes[model_id] + self.model_prior_log(model))
+        self.postProb = self.postProb / sum(self.postProb)
+        self.marginal_postProb = self.postProb @ self.model_matrix
+        self.postMode = model_id_to_vector(np.argmax(self.postProb), p_full)
+
+    def run(self):
+        if self.full_enumeration:
+            self._run_enumeration()
+        else:
+            raise NotImplementedError("Only the full enumeration of the models is implemented at the moment")
 
 
 if __name__ == '__main__':

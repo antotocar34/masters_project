@@ -36,7 +36,7 @@ class NewtonRaphson:
     @staticmethod
     @dispatch(numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, object, float, maxit=int)
     def optimize(y: numpy.ndarray, X: numpy.ndarray, Xt: numpy.ndarray, coef_init: numpy.ndarray, glm: GLM,
-                 tol_grad: float, maxit: int = 300):
+                 tol_grad: float, maxit: int = 1000):
         coef = coef_init
         linpred = X @ coef
         gradient = glm.gradient(Xt, y, linpred)
@@ -54,7 +54,7 @@ class NewtonRaphson:
     @staticmethod
     @dispatch(numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, Callable, Callable, float, maxit=int)
     def optimize(y: numpy.ndarray, X: numpy.ndarray, Xt: numpy.ndarray, coef_init: numpy.ndarray, gradient_func: Callable,
-                 hessian_func: Callable, tol_grad: float, maxit: int = 300):
+                 hessian_func: Callable, tol_grad: float, maxit: int = 1000):
         coef = coef_init
         linpred = X @ coef
         gradient = gradient_func(Xt, y, linpred)
