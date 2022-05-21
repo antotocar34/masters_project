@@ -116,7 +116,7 @@ class ModelSelectionSMC(SMC):
                  kernel_steps: int,
                  burnin: int,
                  particle_number: int,
-                 tol_loglike: float = 1e-12,
+                 tol_loglike: float = 1e-8,
                  maxit_smc: int = 40,
                  ess_min_ratio: float = 0.5,
                  tol_grad: float = 1e-13,

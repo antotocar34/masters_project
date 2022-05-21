@@ -1,4 +1,5 @@
 import json
+import time
 
 from alasmc.main import ModelSelectionLA, ModelSelectionSMC, ModelKernel, normal_prior_log, beta_binomial_prior_log
 from alasmc.glm import BinomialLogit, GLM
@@ -19,10 +20,12 @@ def single_dataset(n: int,
                    model_init: np.ndarray,
                    coef_prior_log: Callable,
                    model_prior_log: Callable,
-                   kernel: Callable,
+                   kernel: object,
                    burnin: int,
                    particle_number: int,
                    n_draws: int,
+                   tol_grad: float,
+                   tol_loglike: float,
                    dataset: int = None):
     results = []
     X, y, beta_true = create_data(n=n, n_covariates=n_covariates, n_active=n_active, rho=rho, model=glm)
@@ -32,8 +35,11 @@ def single_dataset(n: int,
                                           optimization_procedure=optimization_procedure,
                                           coef_init=coef_init,
                                           coef_prior_log=coef_prior_log,
-                                          model_prior_log=model_prior_log)
+                                          model_prior_log=model_prior_log,
+                                          tol_grad=tol_grad)
+    start = time.time()
     model_selection_LA.run()
+    end = time.time()
 
     for feature_id in range(n_covariates):
         results.append({'dataset': dataset + 1,
@@ -44,7 +50,8 @@ def single_dataset(n: int,
                         'rho': rho,
                         'model': 'Binomial Logit',
                         'feature': feature_id + 1,
-                        'marginalPP': model_selection_LA.marginal_postProb[feature_id]})
+                        'marginalPP': model_selection_LA.marginal_postProb[feature_id],
+                        'time': end - start})
     print("LA results are ready. Starting", n_draws, "tries of ALASMC.")
     for draw in range(n_draws):
         model_selection_ALASMC = ModelSelectionSMC(X=X,
@@ -59,9 +66,12 @@ def single_dataset(n: int,
                                                    kernel_steps=1,
                                                    burnin=burnin,
                                                    particle_number=particle_number,
+                                                   tol_grad=tol_grad,
+                                                   tol_loglike=tol_loglike,
                                                    verbose=False)
+        start = time.time()
         model_selection_ALASMC.run()
-
+        end = time.time()
         for feature_id in range(n_covariates):
             results.append({'dataset': dataset + 1,
                             'method': 'ALASMC',
@@ -71,8 +81,11 @@ def single_dataset(n: int,
                             'p_true': n_active,
                             'rho': rho,
                             'model': 'Binomial Logit',
+                            'particle_number': particle_number,
+                            'burn_in': burnin,
                             'feature': feature_id + 1,
-                            'marginalPP': model_selection_ALASMC.marginal_postProb[feature_id]})
+                            'marginalPP': model_selection_ALASMC.marginal_postProb[feature_id],
+                            'time': end - start})
         print(f"ALASMC done! [{draw + 1} / {n_draws}]")
     return results
 
@@ -91,7 +104,9 @@ def multiple_datasets(n: int,
                       burnin: int,
                       particle_number: int,
                       n_draws: int,
-                      n_datasets: int):
+                      n_datasets: int,
+                      tol_grad: float,
+                      tol_loglike: float):
     results = []
     for dataset in range(n_datasets):
         results = results + single_dataset(n=n,
@@ -108,7 +123,9 @@ def multiple_datasets(n: int,
                                            burnin=burnin,
                                            particle_number=particle_number,
                                            n_draws=n_draws,
-                                           dataset=dataset)
+                                           dataset=dataset,
+                                           tol_grad=tol_grad,
+                                           tol_loglike=tol_loglike)
         print(f"Sampled datasets: [{dataset + 1} / {n_datasets}]")
     return results
 
@@ -116,25 +133,39 @@ def multiple_datasets(n: int,
 if __name__ == "__main__":
     n_draws = 500
     n_datasets = 1
-    n_covariates = 10
+    n_covariates_list = [10, 15, 20]
     n_active = 3
-    n = 1000
-    rho = 0.0
-    coef_init = np.repeat(0, n_covariates)
-    model_init = np.array([False] * n_covariates)
+    n_list = [500, 1000, 2000, 4000]
+    rho_list = [0.0, 0.5]
+    coef_init_large = np.repeat(0, n_covariates_list[-1])
+    model_init_large = np.array([False] * n_covariates_list[-1])
     kernel = ModelKernel()
-    particle_number = 1000
+    particle_number_list = [1000, 2000]
     burnin = 5000
+    tol_grad = 1e-13
+    tol_loglike = 1e-8
 
-    res = multiple_datasets(n=n, n_covariates=n_covariates, n_active=n_active, rho=rho, glm=BinomialLogit(),
-                            optimization_procedure=NewtonRaphson(), coef_init=coef_init, model_init=model_init,
-                            coef_prior_log=normal_prior_log, model_prior_log=beta_binomial_prior_log,
-                            kernel=kernel, burnin=burnin, particle_number=particle_number, n_draws=n_draws,
-                            n_datasets=n_datasets)
+    param_grid = np.array(np.meshgrid(n_covariates_list, n_list, rho_list, particle_number_list)).T.reshape(-1, 4)
+    n_experiments = len(param_grid)
+    experiment = 1
 
-    with open('results/single_dataset_results.json', 'w') as file:
-        json.dump(res, file)
-    print(f"The experiment is finished.")
+    for n_covariates, n, rho, particle_number in param_grid:
+        n_covariates = int(n_covariates)
+        n = int(n)
+        particle_number = int(particle_number)
+        print(f"Starting experiment [{experiment} / {n_experiments}]")
+        model_init = model_init_large[:n_covariates]
+        coef_init = coef_init_large[:n_covariates]
+        res = multiple_datasets(n=n, n_covariates=n_covariates, n_active=n_active, rho=rho, glm=BinomialLogit(),
+                                optimization_procedure=NewtonRaphson(), coef_init=coef_init, model_init=model_init,
+                                coef_prior_log=normal_prior_log, model_prior_log=beta_binomial_prior_log,
+                                kernel=kernel, burnin=burnin, particle_number=particle_number, n_draws=n_draws,
+                                n_datasets=n_datasets, tol_grad=1e-13, tol_loglike=1e-8)
+
+        with open(f'results/single_BinomialLogit_{n_covariates}covariates_{n}n_{rho}rho_{particle_number}particles_results.json', 'w') as file:
+            json.dump(res, file)
+        print(f"The experiment [{experiment} / {n_experiments}] is finished.")
+        experiment += 1
     #X, y, beta_true = create_data(n=1000, n_covariates=10, n_active=3, rho=0., model=BinomialLogit())
     #coef_init = np.repeat(0, X.shape[1])
     #model_selection = ModelSelectionLA(X, y, glm=BinomialLogit(), optimization_procedure=NewtonRaphson(), coef_init=coef_init,
