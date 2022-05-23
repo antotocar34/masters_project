@@ -12,10 +12,10 @@ from scipy.special import softmax, comb
 from copy import deepcopy
 from collections import Counter
 
-from .smc import SMC
-from .glm import GLM, BinomialLogit, PoissonRegression
-from .utilities import get_model_id, unzip, model_id_to_vector, create_model_matrix, create_data
-from .optimization import NewtonRaphson
+from alasmc.smc import SMC
+from alasmc.glm import GLM, BinomialLogit
+from alasmc.utilities import get_model_id, unzip, model_id_to_vector, create_model_matrix,create_data
+from alasmc.optimization import NewtonRaphson
 
 
 class ApproxIntegral:
@@ -62,7 +62,6 @@ class ModelKernel:
     @staticmethod
     def sample(model_cur: np.ndarray) -> np.ndarray:
         """
-        ...
 
         Parameters:
             model_cur:  Current particle to provide a new particle in re-sampling procedure.        [numpy.ndarray]
