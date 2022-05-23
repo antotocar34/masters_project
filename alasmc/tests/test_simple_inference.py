@@ -7,7 +7,7 @@ from scipy.spatial.distance import hamming
 
 from termcolor import colored
 
-from alasmc.main import ModelSelectionSMC, ModelKernel, normal_prior_log
+from alasmc.main import ModelSelectionSMC, ModelKernel, normal_prior_log, beta_binomial_prior_log
 from alasmc.glm import BinomialLogit
 from alasmc.utilities import get_model_id, model_id_to_vector
 from alasmc.optimization import NewtonRaphson
@@ -38,10 +38,16 @@ def easy_data():
 
     smc = ModelSelectionSMC(X, y, 
                             glm=BinomialLogit,
-                            optimization_procedure=newton_iteration,
+                            optimization_procedure=NewtonRaphson(),
+                            coef_init=np.array([0] * n_covariates), 
+                            model_init=model_init, 
+                            coef_prior_log=normal_prior_log,
+                            model_prior_log=beta_binomial_prior_log,
                             burnin=1000,
-                            coef_init=np.array([0] * n_covariates), model_init=model_init, coef_prior=normal_prior,
-                            kernel=kernel, kernel_steps=5, particle_number=particle_number, verbose=True)
+                            kernel=kernel, 
+                            kernel_steps=5, 
+                            particle_number=particle_number, 
+                            verbose=True)
     return smc, beta_true, n_covariates
 
 
