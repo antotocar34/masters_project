@@ -7,3 +7,4 @@ __pycache__
 .envrc
 experiments/.ipynb_checkpoints
 experiments/Untitled.ipynb
+experiments/results

@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 
 import numpy as np
+from scipy.special import factorial
 
 
 class GLM(ABC):
@@ -58,3 +59,26 @@ class BinomialLogit(GLM):
     def d2b(linpred):
         p = 1 / (1 + np.exp(-linpred))
         return p * (1 - p)
+
+
+class PoissonRegression(GLM):
+
+    @staticmethod
+    def sample(X: np.ndarray, beta_true: np.ndarray):
+        _lambda = np.exp(X @ beta_true)
+        n = X.shape[0]
+        y = np.random.poisson(lam=_lambda, size=n)
+        return y
+
+    @staticmethod
+    def loglikelihood(y, linpred):
+        _lambda = np.exp(linpred)
+        return y.dot(linpred) - sum(_lambda) #- sum(np.log(factorial(y_i)) for y_i in y) # sum(sum(np.log(np.arange(2, y[i] + 1))) for i in range(len(y)))
+
+    @staticmethod
+    def db(linpred):
+        return np.exp(linpred)
+
+    @staticmethod
+    def d2b(linpred):
+        return np.exp(linpred)

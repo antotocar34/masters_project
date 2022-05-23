@@ -34,6 +34,16 @@ class NewtonRaphson:
         return coef, gradient, hessian_inv
 
     @staticmethod
+    @dispatch(numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, Callable, Callable, int)
+    def iteration(y: numpy.ndarray, X: numpy.ndarray, Xt: numpy.ndarray, coef: numpy.ndarray, linpred: numpy.ndarray,
+                  gradient_func: Callable, hessian_func: Callable, iter: int):
+        gradient = gradient_func(Xt, y, linpred)
+        hessian = hessian_func(X, Xt, linpred)
+        hessian_inv = numpy.linalg.inv(hessian)
+        coef = coef - hessian_inv @ gradient / iter**0.5
+        return coef, gradient, hessian_inv
+
+    @staticmethod
     @dispatch(numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, object, float, maxit=int)
     def optimize(y: numpy.ndarray, X: numpy.ndarray, Xt: numpy.ndarray, coef_init: numpy.ndarray, glm: GLM,
                  tol_grad: float, maxit: int = 1000):

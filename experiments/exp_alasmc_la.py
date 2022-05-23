@@ -2,7 +2,7 @@ import json
 import time
 
 from alasmc.main import ModelSelectionLA, ModelSelectionSMC, ModelKernel, normal_prior_log, beta_binomial_prior_log
-from alasmc.glm import BinomialLogit, GLM
+from alasmc.glm import BinomialLogit, PoissonRegression, GLM
 from alasmc.utilities import create_data
 from alasmc.optimization import NewtonRaphson
 from collections.abc import Callable
@@ -48,7 +48,7 @@ def single_dataset(n: int,
                         'p': n_covariates,
                         'p_true': n_active,
                         'rho': rho,
-                        'model': 'Binomial Logit',
+                        'model': 'Poisson Regression',
                         'feature': feature_id + 1,
                         'marginalPP': model_selection_LA.marginal_postProb[feature_id],
                         'time': end - start})
@@ -80,7 +80,7 @@ def single_dataset(n: int,
                             'p': n_covariates,
                             'p_true': n_active,
                             'rho': rho,
-                            'model': 'Binomial Logit',
+                            'model': 'Poisson Regression',
                             'particle_number': particle_number,
                             'burn_in': burnin,
                             'feature': feature_id + 1,
@@ -133,36 +133,36 @@ def multiple_datasets(n: int,
 if __name__ == "__main__":
     n_draws = 500
     n_datasets = 1
-    n_covariates_list = [10, 15, 20]
+    n_covariates_list = [10, 15]
     n_active = 3
     n_list = [500, 1000, 2000, 4000]
     rho_list = [0.0, 0.5]
     coef_init_large = np.repeat(0, n_covariates_list[-1])
     model_init_large = np.array([False] * n_covariates_list[-1])
     kernel = ModelKernel()
-    particle_number_list = [1000, 2000]
-    burnin = 5000
-    tol_grad = 1e-13
-    tol_loglike = 1e-8
+    tol_grad = 1e-10
+    tol_loglike = 1e-10
 
-    param_grid = np.array(np.meshgrid(n_covariates_list, n_list, rho_list, particle_number_list)).T.reshape(-1, 4)
+    param_grid = np.array(np.meshgrid(n_covariates_list, n_list, rho_list)).T.reshape(-1, 3)
     n_experiments = len(param_grid)
     experiment = 1
 
-    for n_covariates, n, rho, particle_number in param_grid:
+    for n_covariates, n, rho in param_grid:
         n_covariates = int(n_covariates)
+        burnin = 1000 if n_covariates <= 10 else 5000
+        particle_number = 500 if n_covariates <= 10 else 1000
         n = int(n)
         particle_number = int(particle_number)
         print(f"Starting experiment [{experiment} / {n_experiments}]")
         model_init = model_init_large[:n_covariates]
         coef_init = coef_init_large[:n_covariates]
-        res = multiple_datasets(n=n, n_covariates=n_covariates, n_active=n_active, rho=rho, glm=BinomialLogit(),
+        res = multiple_datasets(n=n, n_covariates=n_covariates, n_active=n_active, rho=rho, glm=BinomialLogit,
                                 optimization_procedure=NewtonRaphson(), coef_init=coef_init, model_init=model_init,
                                 coef_prior_log=normal_prior_log, model_prior_log=beta_binomial_prior_log,
                                 kernel=kernel, burnin=burnin, particle_number=particle_number, n_draws=n_draws,
-                                n_datasets=n_datasets, tol_grad=1e-13, tol_loglike=1e-8)
+                                n_datasets=n_datasets, tol_grad=tol_grad, tol_loglike=tol_loglike)
 
-        with open(f'results/single_BinomialLogit_{n_covariates}covariates_{n}n_{rho}rho_{particle_number}particles_results.json', 'w') as file:
+        with open(f'results/single_PoissonRegression_{n_covariates}covariates_{n}n_{rho}rho_{particle_number}particles_{tol_loglike}loglike_{tol_grad}grad_results.json', 'w') as file:
             json.dump(res, file)
         print(f"The experiment [{experiment} / {n_experiments}] is finished.")
         experiment += 1

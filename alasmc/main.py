@@ -13,8 +13,8 @@ from copy import deepcopy
 from collections import Counter
 
 from .smc import SMC
-from .glm import GLM, BinomialLogit
-from .utilities import get_model_id, unzip, model_id_to_vector, create_model_matrix
+from .glm import GLM, BinomialLogit, PoissonRegression
+from .utilities import get_model_id, unzip, model_id_to_vector, create_model_matrix, create_data
 from .optimization import NewtonRaphson
 
 
@@ -349,8 +349,8 @@ class ModelSelectionLA:
                                                                        coef_init, self.glm.loglikelihood,
                                                                        self.coef_prior_log, self.glm.gradient,
                                                                        self.glm.hessian, self.tol_grad)
-            self.postProb[model_id] = np.exp(self.integrated_loglikes[model_id] + self.model_prior_log(model))
-        self.postProb = self.postProb / sum(self.postProb)
+            self.postProb[model_id] = self.integrated_loglikes[model_id] + self.model_prior_log(model)
+        self.postProb = softmax(self.postProb)
         self.marginal_postProb = self.postProb @ self.model_matrix
         self.postMode = model_id_to_vector(np.argmax(self.postProb), p_full)
 
@@ -364,17 +364,11 @@ class ModelSelectionLA:
 if __name__ == '__main__':
     n_covariates = 15
     n_active = 3
-    beta_true = np.concatenate([np.zeros(n_covariates - n_active), np.ones(n_active)])
     n = 1000
-    rho = 0.0
-    sigma_x = np.diag([1.0] * n_covariates)
-    sigma_x[np.triu_indices(n_covariates, 1)] = rho
-    sigma_x[np.tril_indices(n_covariates, -1)] = rho
-    X = np.random.multivariate_normal(np.zeros(n_covariates), sigma_x, n)
-    p = 1 / (1 + np.exp(- X @ beta_true))
-    y = np.random.binomial(1, p, n)
+    rho = 0.5
+    X, y, beta_true = create_data(n, n_covariates, n_active, rho, BinomialLogit)
     kernel = ModelKernel()
-    particle_number = 1000
+    particle_number = 5000
     model_init = np.array([False] * n_covariates)
 
     smc = ModelSelectionSMC(X, y,
@@ -382,7 +376,7 @@ if __name__ == '__main__':
                             optimization_procedure=NewtonRaphson(),  # brackets are important
                             coef_init=np.array([0] * n_covariates), model_init=model_init, coef_prior_log=normal_prior_log,
                             model_prior_log=beta_binomial_prior_log, kernel=kernel, kernel_steps=1, burnin=5000,
-                            particle_number=particle_number, verbose=True)
+                            particle_number=particle_number, verbose=True, tol_grad=1e-13, tol_loglike=1e-13)
     smc.run()
     print(smc.marginal_postProb, smc.postMode)
     # sampled_models = Counter([get_model_id(model) for model in smc.particles])
