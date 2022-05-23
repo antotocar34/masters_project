@@ -140,7 +140,7 @@ class SMC(ABC):
         return 1 / sum(self.w_normalized**2)
 
     @abstractmethod
-    def run(self): # The code is never run---it is merely suggestive
+    def run(self):  # The code is never run---it is merely suggestive
         """
         Runs the Adaptive SMC algorithm. See Algorithm 2 in the report.
 
