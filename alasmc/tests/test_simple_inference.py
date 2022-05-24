@@ -7,7 +7,8 @@ from scipy.spatial.distance import hamming
 
 from termcolor import colored
 
-from alasmc.main import ModelSelectionSMC, ModelKernel, normal_prior_log, beta_binomial_prior_log
+from alasmc.main import ModelSelectionSMC, normal_prior_log, beta_binomial_prior_log
+from alasmc.kernels import SimpleGibbsKernel
 from alasmc.glm import BinomialLogit
 from alasmc.utilities import get_model_id, model_id_to_vector
 from alasmc.optimization import NewtonRaphson
@@ -25,13 +26,12 @@ def create_data(n_covariates, n_active):
     y = np.random.binomial(1, p, n)
     return (X, y, beta_true)
 
-@pytest.fixture
-def easy_data():
+def easy_data(adaptive):
     n_covariates = 5
     n_active = 1
     X, y, beta_true = create_data(n_covariates,n_active)
 
-    kernel = ModelKernel()
+    kernel = SimpleGibbsKernel()
     particle_number = 1000
     model_init = np.array([False] * n_covariates)
     model_init[np.random.choice(n_covariates)] = True
@@ -45,7 +45,9 @@ def easy_data():
                             model_prior_log=beta_binomial_prior_log,
                             burnin=1000,
                             kernel=kernel, 
-                            kernel_steps=5, 
+                            initial_kernel=kernel,
+                            adaptive_move=adaptive,
+                            kernel_steps=1, 
                             particle_number=particle_number, 
                             verbose=True)
     return smc, beta_true, n_covariates
@@ -53,9 +55,9 @@ def easy_data():
 
 # Simple test, 5 covariates, only one is significant.
 # Tests the functionality of the whole package on a very simple case.
-@pytest.mark.parametrize('execution_number', range(5))
-def test_simple_inference(easy_data, capsys, execution_number):
-    smc, beta_true, n_covariates = easy_data
+@pytest.mark.parametrize('adaptive', [True, False])
+def test_simple_inference(capsys, adaptive):
+    smc, beta_true, n_covariates = easy_data(adaptive)
     smc.run()
     sampled_models = Counter([get_model_id(model) for model in smc.particles])
     true_model_id = get_model_id(beta_true != 0)
