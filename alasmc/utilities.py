@@ -27,8 +27,7 @@ def create_model_matrix(X: np.ndarray):
     return model_matrix
 
 
-def create_data(n: int, n_covariates: int, n_active: int, rho: float, model: object):
-    beta_true = np.concatenate([np.zeros(n_covariates - n_active), np.ones(n_active)])
+def create_data(n: int, n_covariates: int, n_active: int, rho: float, model: object, beta_true: np.ndarray):
     n = n
     rho = rho
     sigma_x = np.diag([1.0] * n_covariates)
@@ -36,4 +35,8 @@ def create_data(n: int, n_covariates: int, n_active: int, rho: float, model: obj
     sigma_x[np.tril_indices(n_covariates, -1)] = rho
     X = np.random.multivariate_normal(np.zeros(n_covariates), sigma_x, n)
     y = model.sample(X, beta_true)
-    return X, y, beta_true
+    return X, y
+
+
+def l0_norm(vector: np.ndarray, atol: float = 1e-08):
+    return np.sum(~np.isclose(vector, 0, atol=atol))
