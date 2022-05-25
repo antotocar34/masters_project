@@ -23,18 +23,20 @@ class ApproxIntegral:
     def ala_log(y: np.ndarray, linpred_old: np.ndarray, coef_new: np.ndarray, gradient: np.ndarray,
                 hessian_inv: np.ndarray, loglikelihood: callable, coef_prior_log: callable):
         p = len(coef_new)
-        return loglikelihood(y, linpred_old) + coef_prior_log(coef_new) + p / 2 * np.log(2 * np.pi) + \
-               0.5 * np.log(np.linalg.det(hessian_inv)) + 0.5 * gradient.transpose() @ hessian_inv @ gradient
+        return loglikelihood(y, linpred_old) + coef_prior_log(coef_new) + p / 2 * np.log(2 * np.pi) + 0.5 * np.log(
+            np.linalg.det(hessian_inv)) + 0.5 * gradient.transpose() @ hessian_inv @ gradient
 
     @staticmethod
     def la_log(y: np.ndarray, X: np.ndarray, Xt: np.ndarray, coef_init: np.ndarray, loglikelihood: callable,
-               coef_prior_log: callable, gradient_func: callable, hessian_func: callable, tol_grad: float):
+               coef_prior_log: callable, gradient_func: callable, hessian_func: callable, tol_grad: float,
+               adjusted_curvature: bool = False):
         p = len(coef_init)
         if p == 0:
             return loglikelihood(y, X @ coef_init)
-        coef, linpred, _, hessian_inv = NewtonRaphson.optimize(y, X, Xt, coef_init, gradient_func, hessian_func, tol_grad)
-        return loglikelihood(y, linpred) + coef_prior_log(coef) + (p / 2) * np.log(2 * np.pi) + 0.5 * \
-               np.log(np.linalg.det(hessian_inv))
+        coef, linpred, _, hessian_inv = NewtonRaphson.optimize(y, X, Xt, coef_init, gradient_func, hessian_func,
+                                                               tol_grad, adjusted_curvature=adjusted_curvature)
+        return loglikelihood(y, linpred) + coef_prior_log(coef) + (p / 2) * np.log(2 * np.pi) + 0.5 * np.log(
+            np.linalg.det(hessian_inv))
 
 
 # Here we set default g = 1. In fact, we might also think about adding rho parameter.
@@ -120,7 +122,8 @@ class ModelSelectionSMC(SMC):
                  maxit_smc: int = 40,
                  ess_min_ratio: float = 0.5,
                  tol_grad: float = 1e-13,
-                 verbose: bool = False) -> None:
+                 verbose: int = 0,
+                 adjusted_curvature: bool = False) -> None:
 
         super().__init__(
             kernel=kernel,
@@ -152,6 +155,7 @@ class ModelSelectionSMC(SMC):
         self.postProb = {}
         self.marginal_postProb = None
         self.postMode = None
+        self.adjusted_curvature = adjusted_curvature
 
     def compute_integrated_loglike(self, model: np.ndarray, model_id: int):
         converged = False
@@ -180,7 +184,8 @@ class ModelSelectionSMC(SMC):
                                                                                         coef_old,
                                                                                         linpred_old,
                                                                                         self.glm.gradient,
-                                                                                        self.glm.hessian)
+                                                                                        self.glm.hessian,
+                                                                                        adjusted_curvature=self.adjusted_curvature)
             else:
                 raise NotImplementedError("Only Newton method is implemented at the moment.")
             if n_iterations - iter <= 2:
@@ -195,7 +200,7 @@ class ModelSelectionSMC(SMC):
         if not model.any():
             converged = True
         elif n_iterations != 0:
-            converged = sum(gradient**2) / len(gradient) < self.tol_grad  # Check for convergence of optimization problem.
+            converged = np.sum(gradient**2) / len(gradient) < self.tol_grad  # Check for convergence of optimization problem.
         self.computed_at[model_id] = self.iteration if not converged else -1
         return integrated_loglike
 
@@ -212,7 +217,7 @@ class ModelSelectionSMC(SMC):
                 self.compute_integrated_loglike(model_new, model_id_new) - self.model_prior_log(model_new)
             uniform = np.random.uniform(0, 1)
             if uniform <= 1e-200:  # For the sake of dealing with overflow.
-                accept = False
+                accept = True
             else:
                 accept = np.log(1 / uniform - 1) >= postLLRatio
             model_new = model_new if accept else model_old
@@ -255,12 +260,13 @@ class ModelSelectionSMC(SMC):
         self.integrated_loglike_changes = np.array([change(self.integrated_loglikes[get_model_id(model)])
                                                     for model in self.particles])
         self.w_log = self.w_hat_log + self.integrated_loglike_changes
-        self.w_normalized = softmax(self.w_log)
+        w = np.exp(self.w_normalized)
+        self.w_normalized = w / np.sum(w)
 
     def compute_postProb(self):
         postProb = {}
         for id in np.unique(self.particle_ids):
-            postProb[id] = sum(self.w_normalized[self.particle_ids == id])
+            postProb[id] = np.sum(self.w_normalized[self.particle_ids == id])
         return postProb
 
     def run(self):
@@ -276,12 +282,12 @@ class ModelSelectionSMC(SMC):
         Effects:
             Updates all attributes. The logarithm of the estimate of the final normalising constant is kept in 'logLt'.
         """
-        if self.verbose:
+        if self.verbose > 0:
             print('---SMC started---')
         self.sample_init()
         self.w_log = np.zeros(self.particle_number)
         self.w_normalized = np.repeat(1 / self.particle_number, self.particle_number)
-        if self.verbose:
+        if self.verbose > 0:
             print('Iteration 1 done! The initial particles sampled.')
         while not np.allclose(self.integrated_loglike_changes, 0, atol=self.tol_loglike) and self.iteration < self.maxit_smc:
             self.iteration += 1
@@ -293,14 +299,16 @@ class ModelSelectionSMC(SMC):
                 self.w_hat_log = self.w_log
             self.move(ancestor_idxs)
             self.update_weights()  # Recalculate weights
-            if self.verbose:
+            if self.verbose > 0:
                 print(f"Iteration {self.iteration} done!")
+            if self.verbose > 1:
+                print(np.max(np.abs(self.integrated_loglike_changes)))
         if self.iteration == self.maxit_smc:
             print("SMC hits the pre-specified maximum of iterations.")
         self.postProb = self.compute_postProb()
         self.marginal_postProb = self.w_normalized @ self.particles
         self.postMode = model_id_to_vector(max(self.postProb, key=self.postProb.get), len(self.marginal_postProb))
-        if self.verbose:
+        if self.verbose > 0:
             print('---SMC finished---\n')
 
 
@@ -316,7 +324,8 @@ class ModelSelectionLA:
                  # kernel_steps: int,
                  # burnin: int,
                  full_enumeration: bool = True,
-                 tol_grad: float = 1e-13):
+                 tol_grad: float = 1e-13,
+                 adjusted_curvature: bool = False):
         self.X = X
         self.Xt = X.transpose()
         self.y = y
@@ -335,6 +344,7 @@ class ModelSelectionLA:
         self.marginal_postProb = None
         self.postMode = None
         self.model_matrix = None
+        self.adjusted_curvature = adjusted_curvature
 
     def _run_enumeration(self):
         p_full = self.X.shape[1]
@@ -348,7 +358,8 @@ class ModelSelectionLA:
             self.integrated_loglikes[model_id] = ApproxIntegral.la_log(self.y, self.X[:, model], self.Xt[model, :],
                                                                        coef_init, self.glm.loglikelihood,
                                                                        self.coef_prior_log, self.glm.gradient,
-                                                                       self.glm.hessian, self.tol_grad)
+                                                                       self.glm.hessian, self.tol_grad,
+                                                                       self.adjusted_curvature)
             self.postProb[model_id] = self.integrated_loglikes[model_id] + self.model_prior_log(model)
         self.postProb = softmax(self.postProb)
         self.marginal_postProb = self.postProb @ self.model_matrix
@@ -366,7 +377,8 @@ if __name__ == '__main__':
     n_active = 3
     n = 1000
     rho = 0.5
-    X, y, beta_true = create_data(n, n_covariates, n_active, rho, BinomialLogit)
+    beta_true = np.concatenate([np.zeros(n_covariates - n_active), np.ones(n_active)])
+    X, y = create_data(n, n_covariates, n_active, rho, BinomialLogit, beta_true)
     kernel = ModelKernel()
     particle_number = 5000
     model_init = np.array([False] * n_covariates)

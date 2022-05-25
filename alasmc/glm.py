@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 
 import numpy as np
-from scipy.special import factorial
+from .utilities import l0_norm
 
 
 class GLM(ABC):
@@ -26,13 +26,30 @@ class GLM(ABC):
     def sample(X: np.ndarray, beta_true: np.ndarray):
         ...
 
+    @staticmethod
+    @abstractmethod
+    def mean_func(linpred):
+        ...
+
     @classmethod
     def gradient(cls, Xt: np.ndarray, y: np.ndarray, linpred: np.ndarray):
         return Xt @ (cls.db(linpred) - y)
 
     @classmethod
-    def hessian(cls, X: np.ndarray, Xt: np.ndarray, linpred: np.ndarray):
-        return (Xt * cls.d2b(linpred)) @ X
+    def hessian(cls,
+                X: np.ndarray,
+                Xt: np.ndarray,
+                linpred: np.ndarray,
+                phi: float = 1,
+                adjusted_curvature: bool = False,
+                coef: np.ndarray = None,
+                y: np.ndarray = None):
+        if adjusted_curvature and (coef is None or y is None):
+            raise ValueError("The curvature adjustment requires additional arguments: coef and y.")
+        d2b = cls.d2b(linpred)
+        rho = 1 if not adjusted_curvature else np.sum((y - cls.mean_func(linpred))**2 / (phi * d2b)) / (len(y) -
+                                                                                                        l0_norm(coef))
+        return rho * (Xt * d2b) @ X / phi
 
 
 class BinomialLogit(GLM):
@@ -60,6 +77,10 @@ class BinomialLogit(GLM):
         p = 1 / (1 + np.exp(-linpred))
         return p * (1 - p)
 
+    @staticmethod
+    def mean_func(linpred):
+        return 1 / (1 + np.exp(-linpred))
+
 
 class PoissonRegression(GLM):
 
@@ -73,7 +94,11 @@ class PoissonRegression(GLM):
     @staticmethod
     def loglikelihood(y, linpred):
         _lambda = np.exp(linpred)
-        return y.dot(linpred) - sum(_lambda) #- sum(np.log(factorial(y_i)) for y_i in y) # sum(sum(np.log(np.arange(2, y[i] + 1))) for i in range(len(y)))
+        return y.dot(linpred) - sum(_lambda)  # without the part which depends solely on y: - sum(y_i!)
+
+    @staticmethod
+    def mean_func(linpred):
+        return np.exp(linpred)
 
     @staticmethod
     def db(linpred):

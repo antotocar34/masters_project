@@ -32,7 +32,7 @@ class SMC(ABC):
                  particle_number: int,
                  maxit_smc: int = 40,
                  ess_min_ratio: float = 1/2, 
-                 verbose: bool = False) -> None:
+                 verbose: int = 0) -> None:
         self.kernel = kernel
         self.kernel_steps = kernel_steps
         self.particle_number = particle_number
@@ -137,7 +137,7 @@ class SMC(ABC):
         """
         Calculates the effective sample size.
         """
-        return 1 / sum(self.w_normalized**2)
+        return 1 / np.sum(self.w_normalized**2)
 
     @abstractmethod
     def run(self):  # The code is never run---it is merely suggestive
@@ -153,12 +153,12 @@ class SMC(ABC):
         Effects:
             Updates all attributes. The logarithm of the estimate of the final normalising constant is kept in 'logLt'.
         """
-        if self.verbose:
+        if self.verbose > 0:
             print('---SMC started---')
         self.sample_init()
         self.w_log = np.zeros(self.particle_number)
         self.w_normalized = np.repeat(1 / self.particle_number, self.particle_number)
-        if self.verbose:
+        if self.verbose > 0:
             print('Iteration 1 done! The initial particles sampled.')
         while self.iteration < self.maxit_smc:  # change to unnormalized weights being close to 1
             self.iteration += 1
@@ -170,7 +170,7 @@ class SMC(ABC):
                 self.w_hat_log = self.w_log
             self.particles = ...  # Update particles with MCMC kernel
             self.update_weights()  # Recalculate weights
-            if self.verbose:
+            if self.verbose > 0:
                 print(f"Iteration {self.iteration} done!")
-        if self.verbose:
+        if self.verbose > 0:
             print('---SMC finished---\n')
