@@ -12,10 +12,11 @@ from scipy.special import softmax, comb
 from copy import deepcopy
 from collections import Counter
 
-from .smc import SMC
-from .glm import GLM, BinomialLogit, PoissonRegression
-from .utilities import get_model_id, unzip, model_id_to_vector, create_model_matrix, create_data
-from .optimization import NewtonRaphson
+from alasmc.smc import SMC
+from alasmc.glm import GLM, BinomialLogit
+from alasmc.kernels import SimpleGibbsKernel
+from alasmc.utilities import get_model_id, unzip, model_id_to_vector, create_model_matrix,create_data
+from alasmc.optimization import NewtonRaphson
 
 
 class ApproxIntegral:
@@ -49,34 +50,6 @@ def beta_binomial_prior_log(model: np.ndarray):
     p_model = sum(model)
     p = len(model)
     return - np.log(p + 1) - np.log(comb(p, p_model))
-
-
-class ModelKernel:
-    """
-    TODO
-
-    Methods:
-        sample: Samples new matrix given the current one by interchanging a pair of elements.    @static
-    """
-    def __init__(self):
-        pass
-
-    @staticmethod
-    def sample(model_cur: np.ndarray) -> np.ndarray:
-        """
-        ...
-
-        Parameters:
-            model_cur:  Current particle to provide a new particle in re-sampling procedure.        [numpy.ndarray]
-
-        Returns:
-            New particle obtained by sampling form the Markov kernel given the current particle.    [numpy.ndarray]
-        """
-        p = len(model_cur)
-        model_new = deepcopy(model_cur)
-        i = np.random.choice(p)
-        model_new[i] = not model_cur[i]
-        return model_new
 
 
 class ModelSelectionSMC(SMC):
@@ -115,9 +88,11 @@ class ModelSelectionSMC(SMC):
                  coef_prior_log: callable,
                  model_prior_log: callable,
                  kernel: callable,
+                 adaptive_move:bool, 
                  kernel_steps: int,
                  burnin: int,
                  particle_number: int,
+                 initial_kernel = SimpleGibbsKernel(),
                  tol_loglike: float = 1e-8,
                  maxit_smc: int = 40,
                  ess_min_ratio: float = 0.5,
@@ -138,17 +113,22 @@ class ModelSelectionSMC(SMC):
         self.Xt = X.transpose()
         self.y = y
         self.glm = glm
+
         self.coef_init = coef_init
         self.model_init = model_init
+
+        self.initial_kernel = initial_kernel
         self.particle_ids = np.zeros(particle_number)
         self.burnin = burnin
+        self.adaptive_move = adaptive_move
+
         self.tol_grad = tol_grad  # Let p_t = p_{t+1} once norm of gradient is smaller than this value.
+        self.tol_loglike = tol_loglike
+
         self.coef_prior_log = coef_prior_log
         self.model_prior_log = model_prior_log
         self.optimization_procedure = optimization_procedure
-        self.tol_loglike = tol_loglike
         self.coefs = {}  # Used to save computed coefficients for models. 
-                         # TODO add type annotation to make clear what this dictionary is
         self.integrated_loglikes = {}  # Used to save integrated likelihoods for models.
         self.integrated_loglike_changes = np.repeat(np.nan, particle_number)
         self.computed_at = {}  # Used to save the number of the latest iteration where the coefficients and LL were upd.
@@ -204,25 +184,9 @@ class ModelSelectionSMC(SMC):
         self.computed_at[model_id] = self.iteration if not converged else -1
         return integrated_loglike
 
-    # Does this need to be part of the class? ANSWER: It does not. We'll create another script with kernels.
-    def gibbs_iteration(self, model: np.ndarray):
-        model_new = model
-        model_id_new = get_model_id(model_new)
-        for _ in range(self.kernel_steps):
-            model_old = model_new
-            model_id_old = model_id_new
-            model_new = self.kernel.sample(model_old)  # Draw a new sample from kernel
-            model_id_new = get_model_id(model_new)
-            postLLRatio = self.compute_integrated_loglike(model_old, model_id_old) + self.model_prior_log(model_old) - \
-                self.compute_integrated_loglike(model_new, model_id_new) - self.model_prior_log(model_new)
-            uniform = np.random.uniform(0, 1)
-            if uniform <= 1e-200:  # For the sake of dealing with overflow.
-                accept = True
-            else:
-                accept = np.log(1 / uniform - 1) >= postLLRatio
-            model_new = model_new if accept else model_old
-            model_id_new = model_id_new if accept else model_id_old
-        return model_id_new, model_new
+
+    def particle_diversity(self, particles):
+      return np.unique([get_model_id(p) for p in particles]).size / self.particle_number
 
     def sample_init(self):
         """
@@ -231,16 +195,37 @@ class ModelSelectionSMC(SMC):
         model_new = self.model_init  # Todo abstract away
         model_new_id = get_model_id(model_new)
         for i in range(self.particle_number + self.burnin):
-            model_old_id, model_old = model_new_id, model_new
-            model_new_id, model_new = self.gibbs_iteration(model_old)
+            model_old, model_old_id = model_new, model_new_id
+            model_new, model_id_new = self.initial_kernel.accept_reject(model_old, model_old_id, self)
             if (j := i - self.burnin) >= 0:
                 self.particle_ids[j] = model_new_id
                 self.particles[j] = model_new
 
     def move(self, ancestor_idxs: np.array):
-        particle_ids, particles = unzip([self.gibbs_iteration(self.particles[ancestor_idx])
-                                         for ancestor_idx in ancestor_idxs])
-        self.particle_ids, self.particles = np.array(particle_ids), np.array(particles)
+        if self.adaptive_move:
+            old_particle_diversity = self.particle_diversity(np.array(self.particles)[ancestor_idxs])
+            current_particle_diversity = old_particle_diversity
+            new_particles = self.particles
+            converged = False
+            while not converged:
+                new_particles, new_particles_ids = self.kernel.sweep(new_particles, self)
+                old_particle_diversity = current_particle_diversity
+                current_particle_diversity = self.particle_diversity(new_particles)
+
+                converged = (
+                        (np.abs(current_particle_diversity - old_particle_diversity) < 0.02) 
+                        or 
+                        (current_particle_diversity > 0.95)
+                        )
+
+            self.particles, self.particle_ids = new_particles, new_particles_ids
+
+        else:
+            assert self.kernel_steps > 0
+            current_particles = np.array(self.particles)[ancestor_idxs]
+            for _ in range(self.kernel_steps):
+                current_particles, current_particles_ids = self.kernel.sweep(current_particles, self)
+            self.particles, self.particle_ids = current_particles, current_particles_ids
 
     def update_weights(self) -> None:
         """
@@ -297,7 +282,7 @@ class ModelSelectionSMC(SMC):
             else:
                 ancestor_idxs = np.arange(self.particle_number)
                 self.w_hat_log = self.w_log
-            self.move(ancestor_idxs)
+            self.move(ancestor_idxs) # Apply MCMC Step
             self.update_weights()  # Recalculate weights
             if self.verbose > 0:
                 print(f"Iteration {self.iteration} done!")
@@ -387,7 +372,11 @@ if __name__ == '__main__':
                             glm=BinomialLogit,
                             optimization_procedure=NewtonRaphson(),  # brackets are important
                             coef_init=np.array([0] * n_covariates), model_init=model_init, coef_prior_log=normal_prior_log,
-                            model_prior_log=beta_binomial_prior_log, kernel=kernel, kernel_steps=1, burnin=5000,
+                            model_prior_log=beta_binomial_prior_log, 
+                            kernel=SimpleGibbsKernel(), 
+                            kernel_steps=1, 
+                            adaptive_move=True,
+                            burnin=5000,
                             particle_number=particle_number, verbose=True, tol_grad=1e-13, tol_loglike=1e-13)
     smc.run()
     print(smc.marginal_postProb, smc.postMode)
