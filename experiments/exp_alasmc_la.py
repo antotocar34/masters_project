@@ -1,7 +1,8 @@
 import json
 import time
 
-from alasmc.main import ModelSelectionLA, ModelSelectionSMC, ModelKernel, normal_prior_log, beta_binomial_prior_log
+from alasmc.main import ModelSelectionLA, ModelSelectionSMC, normal_prior_log, beta_binomial_prior_log
+from alasmc.kernels import SimpleGibbsKernel
 from alasmc.glm import BinomialLogit, PoissonRegression, GLM
 from alasmc.utilities import create_data
 from alasmc.optimization import NewtonRaphson
@@ -10,8 +11,8 @@ from sklearn.linear_model import PoissonRegressor, LogisticRegression
 
 import numpy as np
 
-import warnings
-warnings.filterwarnings("error")
+# import warnings
+# warnings.filterwarnings("error")
 
 
 def single_dataset(n: int,
@@ -180,15 +181,15 @@ def multiple_datasets(n: int,
 #
 
 if __name__ == "__main__":
-    n_covariates = 15
+    n_covariates = 20
     n_active = 3
-    n = 10000
-    rho = 0.
+    n = 300
+    rho = 0.5
     beta_true = np.concatenate([np.zeros(n_covariates - n_active), np.ones(n_active)])
     X, y = create_data(n, n_covariates, n_active, rho, PoissonRegression, beta_true)
-    kernel = ModelKernel()
-    particle_number = 5000
-    coef_init = np.zeros(n_covariates)  # PoissonRegressor(fit_intercept=False, tol=1e-10, max_iter=1000).fit(X, y).coef_
+    kernel = SimpleGibbsKernel()
+    particle_number = 1000
+    coef_init = PoissonRegressor(fit_intercept=False, alpha=0, max_iter=1000).fit(X, y).coef_
     model_init = np.repeat(False, n_covariates)
 
     smc = ModelSelectionSMC(X, y,
@@ -197,7 +198,7 @@ if __name__ == "__main__":
                             coef_init=coef_init, model_init=model_init, coef_prior_log=normal_prior_log,
                             model_prior_log=beta_binomial_prior_log, kernel=kernel, kernel_steps=1, burnin=5000,
                             particle_number=particle_number, verbose=2, tol_grad=1e-10, tol_loglike=1e-10,
-                            adjusted_curvature=True)
+                            adjusted_curvature=True, adaptive_move=False)
 
     # model_selection_LA = ModelSelectionLA(X=X,
     #                                       y=y,

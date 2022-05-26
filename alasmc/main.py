@@ -15,7 +15,7 @@ from collections import Counter
 from alasmc.smc import SMC
 from alasmc.glm import GLM, BinomialLogit
 from alasmc.kernels import SimpleGibbsKernel
-from alasmc.utilities import get_model_id, unzip, model_id_to_vector, create_model_matrix,create_data
+from alasmc.utilities import get_model_id, unzip, model_id_to_vector, create_model_matrix, create_data
 from alasmc.optimization import NewtonRaphson
 
 
@@ -88,11 +88,11 @@ class ModelSelectionSMC(SMC):
                  coef_prior_log: callable,
                  model_prior_log: callable,
                  kernel: callable,
-                 adaptive_move:bool, 
+                 adaptive_move: bool,
                  kernel_steps: int,
                  burnin: int,
                  particle_number: int,
-                 initial_kernel = SimpleGibbsKernel(),
+                 initial_kernel=SimpleGibbsKernel(),
                  tol_loglike: float = 1e-8,
                  maxit_smc: int = 40,
                  ess_min_ratio: float = 0.5,
@@ -118,7 +118,7 @@ class ModelSelectionSMC(SMC):
         self.model_init = model_init
 
         self.initial_kernel = initial_kernel
-        self.particle_ids = np.zeros(particle_number)
+        self.particle_ids = np.array([''] * self.particle_number, dtype=object)
         self.burnin = burnin
         self.adaptive_move = adaptive_move
 
@@ -184,7 +184,6 @@ class ModelSelectionSMC(SMC):
         self.computed_at[model_id] = self.iteration if not converged else -1
         return integrated_loglike
 
-
     def particle_diversity(self, particles):
       return np.unique([get_model_id(p) for p in particles]).size / self.particle_number
 
@@ -193,40 +192,40 @@ class ModelSelectionSMC(SMC):
         Sample Initial Particles
         """
         model_new = self.model_init  # Todo abstract away
-        model_new_id = get_model_id(model_new)
+        model_id_new = get_model_id(model_new)
         for i in range(self.particle_number + self.burnin):
-            model_old, model_old_id = model_new, model_new_id
-            model_new, model_id_new = self.initial_kernel.accept_reject(model_old, model_old_id, self)
+            model_old, model_id_old = model_new, model_id_new
+            model_new, model_id_new = self.initial_kernel.accept_reject(model_old, model_id_old, self)
             if (j := i - self.burnin) >= 0:
-                self.particle_ids[j] = model_new_id
+                self.particle_ids[j] = model_id_new
                 self.particles[j] = model_new
 
     def move(self, ancestor_idxs: np.array):
-        self.kernel.initialize(self, ancestor_idxs) # Some kernels need some setup
+        self.kernel.initialize(self, ancestor_idxs)  # Some kernels need some setup
+        new_particles = self.particles[ancestor_idxs]
+        new_particle_ids = self.particle_ids[ancestor_idxs]
         if self.adaptive_move:
-            old_particle_diversity = self.particle_diversity(np.array(self.particles)[ancestor_idxs])
+            old_particle_diversity = self.particle_diversity(new_particles)
             current_particle_diversity = old_particle_diversity
-            new_particles = self.particles
             converged = False
             while not converged:
-                new_particles, new_particles_ids = self.kernel.sweep(new_particles, self)
+                new_particles, new_particle_ids = self.kernel.sweep(new_particles, new_particle_ids, self)
                 old_particle_diversity = current_particle_diversity
                 current_particle_diversity = self.particle_diversity(new_particles)
 
                 converged = (
-                        (np.abs(current_particle_diversity - old_particle_diversity) < 0.02) 
-                        or 
+                        (np.abs(current_particle_diversity - old_particle_diversity) < 0.02)
+                        or
                         (current_particle_diversity > 0.95)
-                        )
+                )
 
-            self.particles, self.particle_ids = new_particles, new_particles_ids
+            self.particles, self.particle_ids = new_particles, new_particle_ids
 
         else:
             assert self.kernel_steps > 0
-            current_particles = np.array(self.particles)[ancestor_idxs]
             for _ in range(self.kernel_steps):
-                current_particles, current_particles_ids = self.kernel.sweep(current_particles, self)
-            self.particles, self.particle_ids = current_particles, current_particles_ids
+                new_particles, new_particle_ids = self.kernel.sweep(new_particles, new_particle_ids, self)
+            self.particles, self.particle_ids = new_particles, new_particle_ids
 
     def update_weights(self) -> None:
         """
@@ -283,12 +282,13 @@ class ModelSelectionSMC(SMC):
             else:
                 ancestor_idxs = np.arange(self.particle_number)
                 self.w_hat_log = self.w_log
-            self.move(ancestor_idxs) # Apply MCMC Step
+            self.move(ancestor_idxs)  # Apply MCMC Step
             self.update_weights()  # Recalculate weights
             if self.verbose > 0:
                 print(f"Iteration {self.iteration} done!")
             if self.verbose > 1:
-                print(np.max(np.abs(self.integrated_loglike_changes)))
+                print("Maximum absolute integrated log-likelihood change at this step is: ",
+                      np.max(np.abs(self.integrated_loglike_changes)))
         if self.iteration == self.maxit_smc:
             print("SMC hits the pre-specified maximum of iterations.")
         self.postProb = self.compute_postProb()
@@ -365,7 +365,7 @@ if __name__ == '__main__':
     rho = 0.5
     beta_true = np.concatenate([np.zeros(n_covariates - n_active), np.ones(n_active)])
     X, y = create_data(n, n_covariates, n_active, rho, BinomialLogit, beta_true)
-    kernel = ModelKernel()
+    kernel = SimpleGibbsKernel()
     particle_number = 5000
     model_init = np.array([False] * n_covariates)
 
@@ -373,9 +373,9 @@ if __name__ == '__main__':
                             glm=BinomialLogit,
                             optimization_procedure=NewtonRaphson(),  # brackets are important
                             coef_init=np.array([0] * n_covariates), model_init=model_init, coef_prior_log=normal_prior_log,
-                            model_prior_log=beta_binomial_prior_log, 
-                            kernel=SimpleGibbsKernel(), 
-                            kernel_steps=1, 
+                            model_prior_log=beta_binomial_prior_log,
+                            kernel=SimpleGibbsKernel(),
+                            kernel_steps=1,
                             adaptive_move=True,
                             burnin=5000,
                             particle_number=particle_number, verbose=True, tol_grad=1e-13, tol_loglike=1e-13)

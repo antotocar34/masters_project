@@ -25,15 +25,19 @@ class Kernel(ABC):
         model_id = get_model_id(model_new)
         return model_new, model_id
 
-    def sweep(self, particles, smc):
-        L = [self.accept_reject(p, get_model_id(p), smc) for p in particles]
-        new_particles = np.array([tup[0] for tup in L])
-        new_particle_ids = np.array([tup[1] for tup in L])
+    def sweep(self, particles, particle_ids, smc):
+        num_particles = len(particles)
+        new_particles = np.array([None] * num_particles)
+        new_particle_ids = np.array([''] * num_particles, dtype=object)
+        for idx in range(num_particles):
+            new_particles[idx], new_particle_ids[idx] = self.accept_reject(particles[idx],
+                                                                           particle_ids[idx],
+                                                                           smc)
         return new_particles, new_particle_ids
         
 
-    
 class SimpleGibbsKernel(Kernel):
+
     def initialize(self, smc, ancestor_idxs):
         return
 
@@ -52,20 +56,20 @@ class SimpleGibbsKernel(Kernel):
         model_new[i] = not model_cur[i]
         return model_new
 
-    def accept_reject(self, model, model_id, smc:SMC):
-        model_id = get_model_id(model)
+    def accept_reject(self, model, model_id, smc: SMC):
         model_new = self.sample(model)  # Draw a new sample from kernel
         model_id_new = get_model_id(model_new)
         postLLRatio = smc.compute_integrated_loglike(model, model_id) + smc.model_prior_log(model) - \
             smc.compute_integrated_loglike(model_new, model_id_new) - smc.model_prior_log(model_new)
         uniform = np.random.uniform()
         if uniform <= 1e-200:  # For the sake of dealing with overflow.
-            accept = False
+            accept = True
         else:
             accept = np.log(1 / uniform - 1) >= postLLRatio
         model_new = model_new if accept else model
         model_id_new = model_id_new if accept else model_id
         return model_new, model_id_new
+
 
 class LogisticKernel(Kernel):
     def __init__(self):

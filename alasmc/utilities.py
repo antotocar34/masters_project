@@ -1,22 +1,31 @@
 import numpy as np
 
 
-def get_model_id(model: np.ndarray):
+def get_model_id(model: np.ndarray) -> str:
     """
     Returns the binary number associated to a model
     """
-    return int('0b' + ''.join((model * 1).astype(str)), 2)
+    return ''.join((model * 1).astype(str)).lstrip('0')
 
 
-def model_id_to_vector(model_id: int, p: int):
-    return np.array(list(np.binary_repr(model_id).zfill(p))).astype(np.int8)
+# def get_model_id(model: np.ndarray):
+#     """
+#     Returns the binary number associated to a model
+#     """
+#     return int('0b' + ''.join((model * 1).astype(str)), 2)
+
+def model_id_to_vector(model_id: str, p: int) -> np.ndarray:
+    return np.array(list(map(int, '111'.rjust(10, '0'))), dtype=bool)
+
+# def model_id_to_vector(model_id: int, p: int):
+#     return np.array(list(np.binary_repr(model_id).zfill(p))).astype(np.int8)
 
 
-def unzip(l: list):
-    return tuple(zip(*l))
+def unzip(li: list) -> tuple[np.ndarray]:
+    return tuple([np.array(elem, dtype=object) for elem in zip(*li)])
 
 
-def create_model_matrix(X: np.ndarray):
+def create_model_matrix(X: np.ndarray) -> np.ndarray:
     p = X.shape[1]
     model_matrix = np.ndarray((2**p, p))
     for model_id in range(2**p):
@@ -27,7 +36,7 @@ def create_model_matrix(X: np.ndarray):
     return model_matrix
 
 
-def create_data(n: int, n_covariates: int, n_active: int, rho: float, model: object, beta_true: np.ndarray):
+def create_data(n: int, n_covariates: int, n_active: int, rho: float, model: object, beta_true: np.ndarray) -> tuple:
     n = n
     rho = rho
     sigma_x = np.diag([1.0] * n_covariates)
@@ -38,5 +47,5 @@ def create_data(n: int, n_covariates: int, n_active: int, rho: float, model: obj
     return X, y
 
 
-def l0_norm(vector: np.ndarray, atol: float = 1e-08):
+def l0_norm(vector: np.ndarray, atol: float = 1e-12) -> float:
     return np.sum(~np.isclose(vector, 0, atol=atol))
