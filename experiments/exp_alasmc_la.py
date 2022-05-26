@@ -181,14 +181,14 @@ def multiple_datasets(n: int,
 #
 
 if __name__ == "__main__":
-    n_covariates = 20
-    n_active = 3
-    n = 300
+    n_covariates = 10
+    n_active = 2
+    n = 1000
     rho = 0.5
-    beta_true = np.concatenate([np.zeros(n_covariates - n_active), np.ones(n_active)])
+    beta_true = np.concatenate([np.zeros(n_covariates - n_active), np.array([0.5, 1])])
     X, y = create_data(n, n_covariates, n_active, rho, PoissonRegression, beta_true)
     kernel = SimpleGibbsKernel()
-    particle_number = 1000
+    particle_number = 10000
     coef_init = PoissonRegressor(fit_intercept=False, alpha=0, max_iter=1000).fit(X, y).coef_
     model_init = np.repeat(False, n_covariates)
 
@@ -200,14 +200,16 @@ if __name__ == "__main__":
                             particle_number=particle_number, verbose=2, tol_grad=1e-10, tol_loglike=1e-10,
                             adjusted_curvature=True, adaptive_move=False)
 
-    # model_selection_LA = ModelSelectionLA(X=X,
-    #                                       y=y,
-    #                                       glm=PoissonRegression,
-    #                                       optimization_procedure=optimization_procedure,
-    #                                       coef_init=coef_init,
-    #                                       coef_prior_log=coef_prior_log,
-    #                                       model_prior_log=model_prior_log,
-    #                                       tol_grad=tol_grad)
+    model_selection_LA = ModelSelectionLA(X=X,
+                                          y=y,
+                                          glm=PoissonRegression,
+                                          optimization_procedure=NewtonRaphson(),
+                                          coef_init=coef_init,
+                                          coef_prior_log=normal_prior_log,
+                                          model_prior_log=beta_binomial_prior_log,
+                                          tol_grad=1e-10)
 
     smc.run()
+    model_selection_LA.run()
     print(smc.marginal_postProb, smc.postMode)
+    print(model_selection_LA.marginal_postProb, model_selection_LA.postMode)

@@ -3,7 +3,10 @@ import numpy as np
 
 def get_model_id(model: np.ndarray) -> str:
     """
-    Returns the binary number associated to a model
+    Returns the string of zeros and ones (without left zeros) associated to a model, i.e.:
+    array([False, True, True]) -> '11'.
+
+    Note that model without covariates corresponds to an empty string, that is: array([False, False, False]) -> ''.
     """
     return ''.join((model * 1).astype(str)).lstrip('0')
 
@@ -15,7 +18,7 @@ def get_model_id(model: np.ndarray) -> str:
 #     return int('0b' + ''.join((model * 1).astype(str)), 2)
 
 def model_id_to_vector(model_id: str, p: int) -> np.ndarray:
-    return np.array(list(map(int, '111'.rjust(10, '0'))), dtype=bool)
+    return np.array(list(map(int, model_id.rjust(p, '0'))), dtype=bool)
 
 # def model_id_to_vector(model_id: int, p: int):
 #     return np.array(list(np.binary_repr(model_id).zfill(p))).astype(np.int8)
@@ -27,12 +30,10 @@ def unzip(li: list) -> tuple[np.ndarray]:
 
 def create_model_matrix(X: np.ndarray) -> np.ndarray:
     p = X.shape[1]
-    model_matrix = np.ndarray((2**p, p))
-    for model_id in range(2**p):
-        model_str = bin(model_id)[2:]
-        model_str = '0'*(p - len(model_str)) + model_str
-        model_matrix[model_id, ] = np.array(list(model_str), dtype=int)
-        model_matrix = model_matrix == 1
+    model_matrix = np.repeat(False, 2**p * p).reshape(2**p, p)
+    for model_num in range(2**p):
+        model_id = bin(model_num)[2:].lstrip('0')
+        model_matrix[model_num, :] = model_id_to_vector(model_id, p)
     return model_matrix
 
 

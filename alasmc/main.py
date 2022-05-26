@@ -349,7 +349,8 @@ class ModelSelectionLA:
             self.postProb[model_id] = self.integrated_loglikes[model_id] + self.model_prior_log(model)
         self.postProb = softmax(self.postProb)
         self.marginal_postProb = self.postProb @ self.model_matrix
-        self.postMode = model_id_to_vector(np.argmax(self.postProb), p_full)
+        postMode_id = bin(np.argmax(self.postProb))[2:].lstrip('0')
+        self.postMode = model_id_to_vector(postMode_id, p_full)
 
     def run(self):
         if self.full_enumeration:
