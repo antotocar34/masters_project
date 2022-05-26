@@ -202,6 +202,7 @@ class ModelSelectionSMC(SMC):
                 self.particles[j] = model_new
 
     def move(self, ancestor_idxs: np.array):
+        self.kernel.initialize(self, ancestor_idxs) # Some kernels need some setup
         if self.adaptive_move:
             old_particle_diversity = self.particle_diversity(np.array(self.particles)[ancestor_idxs])
             current_particle_diversity = old_particle_diversity
