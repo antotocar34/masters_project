@@ -37,6 +37,33 @@ def create_model_matrix(X: np.ndarray) -> np.ndarray:
     return model_matrix
 
 
+def model_id_to_model_num(model_id: str) -> int:
+    return int('0b' + model_id, 2)
+
+
+def has_intercept(X: np.ndarray) -> bool:
+    return any(X.var(axis=0) == 0.)
+
+
+def prepare_X(X: np.ndarray) -> np.ndarray:
+    pass
+
+
+def full_postProb(postProb: dict, p: int) -> np.ndarray:
+    postProb_full = np.zeros(2**p)
+    for model_id in postProb:
+        model_num = model_id_to_model_num(model_id)
+        postProb_full[model_num] = postProb[model_id]
+    return postProb_full
+
+
+def chi_squared_distance(x: np.ndarray, y: np.ndarray):
+    return 1 / 2 * np.sum((x - y)**2 / (x + y))
+
+
+def euclidean_distance(x: np.ndarray, y: np.ndarray):
+    return np.sum((x - y)**2)**0.5
+
 def create_data(n: int, n_covariates: int, n_active: int, rho: float, model: object, beta_true: np.ndarray) -> tuple:
     n = n
     rho = rho

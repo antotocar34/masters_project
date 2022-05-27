@@ -4,7 +4,7 @@ import time
 from alasmc.main import ModelSelectionLA, ModelSelectionSMC, normal_prior_log, beta_binomial_prior_log
 from alasmc.kernels import SimpleGibbsKernel
 from alasmc.glm import BinomialLogit, PoissonRegression, GLM
-from alasmc.utilities import create_data
+from alasmc.utilities import create_data, full_postProb, chi_squared_distance, euclidean_distance
 from alasmc.optimization import NewtonRaphson
 from collections.abc import Callable
 from sklearn.linear_model import PoissonRegressor, LogisticRegression
@@ -15,9 +15,10 @@ import numpy as np
 # warnings.filterwarnings("error")
 
 
-def single_dataset(n: int,
-                   n_covariates: int,
-                   n_active: int,
+def single_dataset(data_creation: Callable,
+                   n: int,
+                   n_covariates: int,            # !  Compute inside based on data_creation
+                   n_active: int,                # !  Compute inside based on data_creation
                    rho: float,
                    glm: GLM,
                    optimization_procedure: object,
@@ -29,12 +30,16 @@ def single_dataset(n: int,
                    burnin: int,
                    particle_number: int,
                    n_draws: int,
+                   adjusted_curvature: bool,
+                   adaptive_move: bool,
                    tol_grad: float,
                    tol_loglike: float,
                    dataset: int = None):
     results = []
-    beta_true = np.concatenate([np.zeros(n_covariates - n_active), np.ones(n_active)])
-    X, y = create_data(n=n, n_covariates=n_covariates, n_active=n_active, rho=rho, model=glm, beta_true=beta_true)
+    if isinstance(glm, BinomialLogit):
+        model_name = 'Binomial Logit'
+    elif isinstance(glm, PoissonRegression):
+        model_name = 'Poisson'
     model_selection_LA = ModelSelectionLA(X=X,
                                           y=y,
                                           glm=glm,
@@ -47,17 +52,16 @@ def single_dataset(n: int,
     model_selection_LA.run()
     end = time.time()
 
-    for feature_id in range(n_covariates):
-        results.append({'dataset': dataset + 1,
-                        'method': 'LA',
-                        'n': n,
-                        'p': n_covariates,
-                        'p_true': n_active,
-                        'rho': rho,
-                        'model': 'Poisson Regression',
-                        'feature': feature_id + 1,
-                        'marginalPP': model_selection_LA.marginal_postProb[feature_id],
-                        'time': end - start})
+    results.append({'dataset': dataset + 1,
+                    'method': 'LA',
+                    'n': n,
+                    'p': n_covariates,
+                    'p_true': n_active,
+                    'rho': rho,
+                    'model': model_name,
+                    'marginalPProb': model_selection_LA.marginal_postProb,
+                    'postProb': model_selection_LA.postProb,
+                    'time': end - start})
     print("LA results are ready. Starting", n_draws, "tries of ALASMC.")
     for draw in range(n_draws):
         model_selection_ALASMC = ModelSelectionSMC(X=X,
@@ -70,33 +74,42 @@ def single_dataset(n: int,
                                                    model_prior_log=beta_binomial_prior_log,
                                                    kernel=kernel,
                                                    kernel_steps=1,
+                                                   adaptive_move=adaptive_move,
+                                                   adjusted_curvature=adjusted_curvature,
                                                    burnin=burnin,
                                                    particle_number=particle_number,
                                                    tol_grad=tol_grad,
                                                    tol_loglike=tol_loglike,
-                                                   verbose=False)
+                                                   verbose=0)
         start = time.time()
         model_selection_ALASMC.run()
         end = time.time()
-        for feature_id in range(n_covariates):
-            results.append({'dataset': dataset + 1,
-                            'method': 'ALASMC',
-                            'draw': draw,
-                            'n': n,
-                            'p': n_covariates,
-                            'p_true': n_active,
-                            'rho': rho,
-                            'model': 'Poisson Regression',
-                            'particle_number': particle_number,
-                            'burn_in': burnin,
-                            'feature': feature_id + 1,
-                            'marginalPP': model_selection_ALASMC.marginal_postProb[feature_id],
-                            'time': end - start})
-        print(f"ALASMC done! [{draw + 1} / {n_draws}]")
+        postProb_full = full_postProb(model_selection_ALASMC.postProb, n_covariates)
+        results.append({'dataset': dataset + 1,
+                        'method': 'ALASMC',
+                        'draw': draw,
+                        'n': n,
+                        'p': n_covariates,
+                        'p_true': n_active,
+                        'rho': rho,
+                        'model': model_name,
+                        'particle_number': particle_number,
+                        'adaptive_move': adaptive_move,
+                        'adjusted_curvature': adjusted_curvature,
+                        'burn_in': burnin,
+                        'marginalPProb': model_selection_ALASMC.marginal_postProb,
+                        'postProb': postProb_full,
+                        'postProb_chi2dist_to_LA': chi_squared_distance(postProb_full, model_selection_LA.postProb),
+                        'marginalPProb_euqldist_to_LA': euclidean_distance(model_selection_ALASMC.marginal_postProb,
+                                                                           model_selection_LA.marginal_postProb),
+                        'time': end - start})
+        if draw % 10 == 0:
+            print(f"ALASMC done! [{draw + 1} / {n_draws}]")
     return results
 
 
-def multiple_datasets(n: int,
+def multiple_datasets(data_creation: Callable,
+                      n: int,
                       n_covariates: int,
                       n_active: int,
                       rho: float,
@@ -111,6 +124,8 @@ def multiple_datasets(n: int,
                       particle_number: int,
                       n_draws: int,
                       n_datasets: int,
+                      adjusted_curvature: bool,
+                      adaptive_move: bool,
                       tol_grad: float,
                       tol_loglike: float):
     results = []
@@ -127,6 +142,8 @@ def multiple_datasets(n: int,
                                            model_prior_log=model_prior_log,
                                            kernel=kernel,
                                            burnin=burnin,
+                                           adaptive_move=adaptive_move,
+                                           adjusted_curvature=adjusted_curvature,
                                            particle_number=particle_number,
                                            n_draws=n_draws,
                                            dataset=dataset,
@@ -136,9 +153,10 @@ def multiple_datasets(n: int,
     return results
 
 
-#if __name__ == "__main__":
-#    n_draws = 500
-#    n_datasets = 1
+def exp1_data_creation(glm: GLM):
+    pass
+
+
 #    n_covariates_list = [10, 15]
 #    n_active = 3
 #    n_list = [500, 1000, 2000, 4000]
@@ -181,33 +199,38 @@ def multiple_datasets(n: int,
 #
 
 if __name__ == "__main__":
+    tol_grad = 1e-13
+    tol_loglike = 1e-10
+    n_draws = 500
+    n_datasets = 1
     n_covariates = 10
     n_active = 2
     n = 1000
+    beta_true = np.array([0., 0., 0., 0.5, 1])
+    X, y = create_data(n=n, n_covariates=5, n_active=2, rho=0.5, model=PoissonRegression, beta_true=beta_true)
+    X = np.column_stack([X, X**2])
     rho = 0.5
-    beta_true = np.concatenate([np.zeros(n_covariates - n_active), np.array([0.5, 1])])
-    X, y = create_data(n, n_covariates, n_active, rho, PoissonRegression, beta_true)
     kernel = SimpleGibbsKernel()
     particle_number = 10000
     coef_init = PoissonRegressor(fit_intercept=False, alpha=0, max_iter=1000).fit(X, y).coef_
     model_init = np.repeat(False, n_covariates)
 
     smc = ModelSelectionSMC(X, y,
-                            glm=PoissonRegression,
+                            glm=PoissonRegression(),
                             optimization_procedure=NewtonRaphson(),  # brackets are important
                             coef_init=coef_init, model_init=model_init, coef_prior_log=normal_prior_log,
                             model_prior_log=beta_binomial_prior_log, kernel=kernel, kernel_steps=1, burnin=5000,
-                            particle_number=particle_number, verbose=2, tol_grad=1e-10, tol_loglike=1e-10,
-                            adjusted_curvature=True, adaptive_move=False)
+                            particle_number=particle_number, verbose=2, tol_grad=1e-13, tol_loglike=1e-10,
+                            adjusted_curvature=True, adaptive_move=True)
 
     model_selection_LA = ModelSelectionLA(X=X,
                                           y=y,
-                                          glm=PoissonRegression,
+                                          glm=PoissonRegression(),
                                           optimization_procedure=NewtonRaphson(),
                                           coef_init=coef_init,
                                           coef_prior_log=normal_prior_log,
                                           model_prior_log=beta_binomial_prior_log,
-                                          tol_grad=1e-10)
+                                          tol_grad=1e-13)
 
     smc.run()
     model_selection_LA.run()

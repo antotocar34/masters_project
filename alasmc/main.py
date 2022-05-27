@@ -338,15 +338,15 @@ class ModelSelectionLA:
         self.postProb = np.repeat(np.nan, 2**p_full)
         self.marginal_postProb = np.repeat(np.nan, p_full)
         self.model_matrix = create_model_matrix(self.X)
-        for model_id in range(2**p_full):
-            model = self.model_matrix[model_id, :]
+        for model_num in range(2**p_full):
+            model = self.model_matrix[model_num, :]
             coef_init = self.coef_init[model]
-            self.integrated_loglikes[model_id] = ApproxIntegral.la_log(self.y, self.X[:, model], self.Xt[model, :],
+            self.integrated_loglikes[model_num] = ApproxIntegral.la_log(self.y, self.X[:, model], self.Xt[model, :],
                                                                        coef_init, self.glm.loglikelihood,
                                                                        self.coef_prior_log, self.glm.gradient,
                                                                        self.glm.hessian, self.tol_grad,
                                                                        self.adjusted_curvature)
-            self.postProb[model_id] = self.integrated_loglikes[model_id] + self.model_prior_log(model)
+            self.postProb[model_num] = self.integrated_loglikes[model_num] + self.model_prior_log(model)
         self.postProb = softmax(self.postProb)
         self.marginal_postProb = self.postProb @ self.model_matrix
         postMode_id = bin(np.argmax(self.postProb))[2:].lstrip('0')
