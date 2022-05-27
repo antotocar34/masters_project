@@ -15,7 +15,7 @@ from collections import Counter
 from alasmc.smc import SMC
 from alasmc.glm import GLM, BinomialLogit
 from alasmc.kernels import SimpleGibbsKernel
-from alasmc.utilities import get_model_id, unzip, model_id_to_vector, create_model_matrix, create_data
+from alasmc.utilities import get_model_id, prepare_X, model_id_to_vector, create_model_matrix, create_data
 from alasmc.optimization import NewtonRaphson
 
 
@@ -92,16 +92,17 @@ class ModelSelectionSMC(SMC):
                  kernel_steps: int,
                  burnin: int,
                  particle_number: int,
-                 initial_kernel=SimpleGibbsKernel(),
+                 initial_kernel=SimpleGibbsKernel,
                  tol_loglike: float = 1e-8,
                  maxit_smc: int = 40,
                  ess_min_ratio: float = 0.5,
                  tol_grad: float = 1e-13,
-                 verbose: int = 0,
-                 adjusted_curvature: bool = False) -> None:
+                 adjusted_curvature: bool = False,
+                 force_intercept: bool = False,
+                 verbose: int = 0) -> None:
 
         super().__init__(
-            kernel=kernel,
+            kernel=kernel(force_intercept=force_intercept),
             kernel_steps=kernel_steps,
             particle_number=particle_number,
             maxit_smc=maxit_smc,
@@ -109,15 +110,16 @@ class ModelSelectionSMC(SMC):
             verbose=verbose
         )
 
-        self.X = X
-        self.Xt = X.transpose()
+        self.X = prepare_X(X)
+        self.Xt = self.X.transpose()
         self.y = y
         self.glm = glm
 
         self.coef_init = coef_init
-        self.model_init = model_init
+        self.model_init = model_init if len(model_init) == self.X.shape[1] else np.append(False, model_init)
+        self.model_init[0] = True if force_intercept else self.model_init[0]
 
-        self.initial_kernel = initial_kernel
+        self.initial_kernel = initial_kernel(force_intercept=force_intercept)
         self.particle_ids = np.array([''] * self.particle_number, dtype=object)
         self.burnin = burnin
         self.adaptive_move = adaptive_move
@@ -128,6 +130,8 @@ class ModelSelectionSMC(SMC):
         self.coef_prior_log = coef_prior_log
         self.model_prior_log = model_prior_log
         self.optimization_procedure = optimization_procedure
+        self.force_intercept = force_intercept
+
         self.coefs = {}  # Used to save computed coefficients for models. 
         self.integrated_loglikes = {}  # Used to save integrated likelihoods for models.
         self.integrated_loglike_changes = np.repeat(np.nan, particle_number)
@@ -185,14 +189,14 @@ class ModelSelectionSMC(SMC):
         return integrated_loglike
 
     def particle_diversity(self, particles):
-      return np.unique([get_model_id(p) for p in particles]).size / self.particle_number
+        return np.unique([get_model_id(p, self.force_intercept) for p in particles]).size / self.particle_number
 
     def sample_init(self):
         """
         Sample Initial Particles
         """
         model_new = self.model_init  # Todo abstract away
-        model_id_new = get_model_id(model_new)
+        model_id_new = get_model_id(model_new, self.force_intercept)
         for i in range(self.particle_number + self.burnin):
             model_old, model_id_old = model_new, model_id_new
             model_new, model_id_new = self.initial_kernel.accept_reject(model_old, model_id_old, self)
@@ -242,7 +246,8 @@ class ModelSelectionSMC(SMC):
         """
         def change(integrated_loglikes):
             return integrated_loglikes[1] - integrated_loglikes[0]
-        self.integrated_loglike_changes = np.array([change(self.integrated_loglikes[get_model_id(model)])
+        self.integrated_loglike_changes = np.array([change(self.integrated_loglikes[get_model_id(model,
+                                                                                                 self.force_intercept)])
                                                     for model in self.particles])
         self.w_log = self.w_hat_log + self.integrated_loglike_changes
         w = np.exp(self.w_normalized)
@@ -274,7 +279,7 @@ class ModelSelectionSMC(SMC):
         self.w_normalized = np.repeat(1 / self.particle_number, self.particle_number)
         if self.verbose > 0:
             print('Iteration 1 done! The initial particles sampled.')
-        while not np.allclose(self.integrated_loglike_changes, 0, atol=self.tol_loglike) and self.iteration < self.maxit_smc:
+        while not np.abs(self.integrated_loglike_changes).max() < self.tol_loglike and self.iteration < self.maxit_smc:
             self.iteration += 1
             if self.ess() < self.ess_min:
                 ancestor_idxs = self.resample()  # Get indexes of ancestors
@@ -288,12 +293,13 @@ class ModelSelectionSMC(SMC):
                 print(f"Iteration {self.iteration} done!")
             if self.verbose > 1:
                 print("Maximum absolute integrated log-likelihood change at this step is: ",
-                      np.max(np.abs(self.integrated_loglike_changes)))
+                      np.abs(self.integrated_loglike_changes).max())
         if self.iteration == self.maxit_smc:
             print("SMC hits the pre-specified maximum of iterations.")
         self.postProb = self.compute_postProb()
         self.marginal_postProb = self.w_normalized @ self.particles
-        self.postMode = model_id_to_vector(max(self.postProb, key=self.postProb.get), len(self.marginal_postProb))
+        self.postMode = model_id_to_vector(max(self.postProb, key=self.postProb.get), len(self.marginal_postProb),
+                                           self.force_intercept)
         if self.verbose > 0:
             print('---SMC finished---\n')
 
@@ -311,9 +317,10 @@ class ModelSelectionLA:
                  # burnin: int,
                  full_enumeration: bool = True,
                  tol_grad: float = 1e-13,
+                 force_intercept: bool = True,
                  adjusted_curvature: bool = False):
-        self.X = X
-        self.Xt = X.transpose()
+        self.X = prepare_X(X)
+        self.Xt = self.X.transpose()
         self.y = y
         self.glm = glm
         self.optimization_procedure = optimization_procedure
@@ -324,6 +331,7 @@ class ModelSelectionLA:
         # self.kernel_steps = kernel_steps
         # self.burnin = burnin
         self.full_enumeration = full_enumeration
+        self.force_intercept = force_intercept
         self.tol_grad = tol_grad  # Let p_t = p_{t+1} once norm of gradient is smaller than this value.
         self.integrated_loglikes = None
         self.postProb = None
@@ -333,12 +341,12 @@ class ModelSelectionLA:
         self.adjusted_curvature = adjusted_curvature
 
     def _run_enumeration(self):
-        p_full = self.X.shape[1]
-        self.integrated_loglikes = np.repeat(np.nan, 2**p_full)
-        self.postProb = np.repeat(np.nan, 2**p_full)
-        self.marginal_postProb = np.repeat(np.nan, p_full)
-        self.model_matrix = create_model_matrix(self.X)
-        for model_num in range(2**p_full):
+        p_flexible = self.X.shape[1] - 1 * self.force_intercept
+        self.integrated_loglikes = np.repeat(np.nan, 2**p_flexible)
+        self.postProb = np.repeat(np.nan, 2**p_flexible)
+        self.marginal_postProb = np.repeat(np.nan, p_flexible)
+        self.model_matrix = create_model_matrix(self.X, force_intercept=self.force_intercept)
+        for model_num in range(2**p_flexible):
             model = self.model_matrix[model_num, :]
             coef_init = self.coef_init[model]
             self.integrated_loglikes[model_num] = ApproxIntegral.la_log(self.y, self.X[:, model], self.Xt[model, :],
@@ -349,8 +357,9 @@ class ModelSelectionLA:
             self.postProb[model_num] = self.integrated_loglikes[model_num] + self.model_prior_log(model)
         self.postProb = softmax(self.postProb)
         self.marginal_postProb = self.postProb @ self.model_matrix
-        postMode_id = bin(np.argmax(self.postProb))[2:].lstrip('0')
-        self.postMode = model_id_to_vector(postMode_id, p_full)
+        postMode_id = bin(np.argmax(self.postProb))[2:]
+        self.postMode = model_id_to_vector(postMode_id, len(self.marginal_postProb), self.force_intercept)
+
 
     def run(self):
         if self.full_enumeration:

@@ -38,6 +38,9 @@ class Kernel(ABC):
 
 class SimpleGibbsKernel(Kernel):
 
+    def __init__(self, force_intercept: bool):
+        self.force_intercept = force_intercept
+
     def initialize(self, smc, ancestor_idxs):
         return
 
@@ -45,20 +48,21 @@ class SimpleGibbsKernel(Kernel):
         """
 
         Parameters:
-            model_cur:  Current particle to provide a new particle in re-sampling procedure.        [numpy.ndarray]
+            model_cur:       Current particle to provide a new particle in re-sampling procedure.        [numpy.ndarray]
+            force_intercept: If True, the kernel
 
         Returns:
             New particle obtained by sampling form the Markov kernel given the current particle.    [numpy.ndarray]
         """
         p = len(model_cur)
         model_new = deepcopy(model_cur)
-        i = np.random.choice(p)
+        i = np.random.choice(np.arange(1, p)) if self.force_intercept else np.random.choice(p)
         model_new[i] = not model_cur[i]
         return model_new
 
     def accept_reject(self, model, model_id, smc: SMC):
         model_new = self.sample(model)  # Draw a new sample from kernel
-        model_id_new = get_model_id(model_new)
+        model_id_new = get_model_id(model_new, self.force_intercept)
         postLLRatio = smc.compute_integrated_loglike(model, model_id) + smc.model_prior_log(model) - \
             smc.compute_integrated_loglike(model_new, model_id_new) - smc.model_prior_log(model_new)
         uniform = np.random.uniform()
@@ -72,14 +76,16 @@ class SimpleGibbsKernel(Kernel):
 
 
 class LogisticKernel(Kernel):
-    def __init__(self):
+
+    def __init__(self, force_intercept: bool):
+        self.force_intercept = force_intercept
         self.model_matrix = None
         self.coef_dict = None
         self.log_kernel_func = None
         
     def solve_regression_problem(self, i: int, particle_weights, regressor_index):
-        y = self.model_matrix[:, i] ##
-        X = self.model_matrix[:, regressor_index] ##
+        y = self.model_matrix[:, i]
+        X = self.model_matrix[:, regressor_index]
        
         reg = LogisticRegression(fit_intercept=True, penalty="none")
         reg.fit(X, y, particle_weights)
@@ -159,7 +165,7 @@ class LogisticKernel(Kernel):
     def initialize(self, smc, ancestor_idxs):
         print("Building Logistic Kernel...")
         particles = np.array(smc.particles)[ancestor_idxs]
-        particle_weights = softmax(np.array(smc.w_log)[ancestor_idxs]) # Take the weights of the resampled particles
+        particle_weights = softmax(np.array(smc.w_log)[ancestor_idxs])  # Take the weights of the resampled particles
         self.log_kernel_func = self.build_kernel(particles, particle_weights)
         print("Logistic Kernel Built.")
 
@@ -171,7 +177,7 @@ class LogisticKernel(Kernel):
         """
         coef_dict = self.coef_dict
         new_model = np.zeros(model_cur.size, dtype=bool)
-        prob=1
+        prob = 1
         for i in range(model_cur.size):
             q = expit(-coef_dict[i][0] - np.dot(coef_dict[i][1:], new_model[0:i]))
             new_model[i] = bool(bernoulli.rvs(q))
