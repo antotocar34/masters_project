@@ -99,5 +99,5 @@ def create_data(n: int, rho: float, model: object, beta_true: np.ndarray, interc
     return X, y
 
 
-def l0_norm(vector: np.ndarray, atol: float = 1e-12) -> float:
-    return np.sum(~np.isclose(vector, 0, atol=atol))
+def l0_norm(vector: np.ndarray) -> float:
+    return np.sum(vector != 0.)

@@ -195,7 +195,7 @@ class ModelSelectionSMC(SMC):
         """
         Sample Initial Particles
         """
-        model_new = self.model_init  # Todo abstract away
+        model_new = self.model_init
         model_id_new = get_model_id(model_new, self.force_intercept)
         for i in range(self.particle_number + self.burnin):
             model_old, model_id_old = model_new, model_id_new
@@ -224,7 +224,6 @@ class ModelSelectionSMC(SMC):
                 )
 
             self.particles, self.particle_ids = new_particles, new_particle_ids
-
         else:
             assert self.kernel_steps > 0
             for _ in range(self.kernel_steps):

@@ -36,7 +36,7 @@ def single_dataset(data_creation: Callable,
     X, y, beta_true = data_creation(n=n, rho=rho, glm=glm)
     true_model = (beta_true != 0.)
     n_covariates = len(beta_true)
-    n_active = sum(true_model)
+    n_active = int(sum(true_model))
     model_init = np.repeat(False, n_covariates)
     if isinstance(glm, BinomialLogit):
         MLE_full_fit = LogisticRegression(fit_intercept=False, penalty='none').fit(X, y)
@@ -69,12 +69,12 @@ def single_dataset(data_creation: Callable,
                     'p': n_covariates,
                     'p_true': n_active,
                     'rho': rho,
-                    'beta_true': beta_true,
-                    'coef_init': coef_init,
+                    'beta_true': list(beta_true),
+                    'coef_init': list(coef_init),
                     'model': model_name,
                     'force_intercept': force_intercept,
-                    'marginalPProb': model_selection_LA.marginal_postProb,
-                    'postProb': model_selection_LA.postProb,
+                    'marginalPProb': list(model_selection_LA.marginal_postProb),
+                    'postProb': list(model_selection_LA.postProb),
                     'recovers_true': all(model_selection_LA.postMode[force_intercept:] == true_model[force_intercept:]),
                     'time': end - start})
     print("LA results are ready. Starting", smc_runs, "tries of ALASMC.")
@@ -108,8 +108,8 @@ def single_dataset(data_creation: Callable,
                         'p': n_covariates,
                         'p_true': n_active,
                         'rho': rho,
-                        'beta_true': beta_true,
-                        'coef_init': coef_init,
+                        'beta_true': list(beta_true),
+                        'coef_init': list(coef_init),
                         'model': model_name,
                         'particle_number': particle_number,
                         'force_intercept': force_intercept,
@@ -117,8 +117,8 @@ def single_dataset(data_creation: Callable,
                         'adjusted_curvature': adjusted_curvature,
                         'kernel_steps': kernel_steps,
                         'burn_in': burnin,
-                        'marginalPProb': model_selection_ALASMC.marginal_postProb,
-                        'postProb': postProb_full,
+                        'marginalPProb': list(model_selection_ALASMC.marginal_postProb),
+                        'postProb': list(postProb_full),
                         'postProb_chi2dist_to_LA': chi_squared_distance(postProb_full, model_selection_LA.postProb),
                         'marginalPProb_euqldist_to_LA': euclidean_distance(model_selection_ALASMC.marginal_postProb[force_intercept:],
                                                                            model_selection_LA.marginal_postProb[force_intercept:]),
