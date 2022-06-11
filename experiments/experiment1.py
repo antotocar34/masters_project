@@ -1,7 +1,7 @@
 import json
 import time
 
-from alasmc.main import ModelSelectionLA, ModelSelectionSMC, normal_prior_log, beta_binomial_prior_log
+from alasmc.main import ModelSelection, ModelSelectionSMC, normal_prior_log, beta_binomial_prior_log
 from alasmc.kernels import SimpleGibbsKernel
 from alasmc.glm import BinomialLogit, PoissonRegression, GLM
 from alasmc.utilities import create_data, full_postProb, chi_squared_distance, euclidean_distance
@@ -49,16 +49,17 @@ def single_dataset(data_creation: Callable,
         model_name = 'Binomial Logit'
     elif isinstance(glm, PoissonRegression):
         model_name = 'Poisson'
-    model_selection_LA = ModelSelectionLA(X=X,
-                                          y=y,
-                                          glm=glm,
-                                          optimization_procedure=optimization_procedure,
-                                          coef_init=coef_init,
-                                          coef_prior_log=coef_prior_log,
-                                          model_prior_log=model_prior_log,
-                                          force_intercept=force_intercept,
-                                          adjusted_curvature=adjusted_curvature,
-                                          tol_grad=tol_grad)
+    model_selection_LA = ModelSelection(X=X,
+                                        y=y,
+                                        glm=glm,
+                                        optimization_procedure=optimization_procedure,
+                                        coef_init=coef_init,
+                                        coef_prior_log=coef_prior_log,
+                                        model_prior_log=model_prior_log,
+                                        force_intercept=force_intercept,
+                                        integral_approximation="la",
+                                        adjusted_curvature=adjusted_curvature,
+                                        tol_grad=tol_grad)
     start = time.time()
     model_selection_LA.run()
     end = time.time()
@@ -77,7 +78,37 @@ def single_dataset(data_creation: Callable,
                     'postProb': list(model_selection_LA.postProb),
                     'recovers_true': all(model_selection_LA.postMode[force_intercept:] == true_model[force_intercept:]),
                     'time': end - start})
-    print("LA results are ready. Starting", smc_runs, "tries of ALASMC.")
+    print("LA results are ready. Starting ALA with full enumeration.")
+    model_selection_ALA = ModelSelection(X=X,
+                                        y=y,
+                                        glm=glm,
+                                        optimization_procedure=optimization_procedure,
+                                        coef_init=coef_init,
+                                        coef_prior_log=coef_prior_log,
+                                        model_prior_log=model_prior_log,
+                                        force_intercept=force_intercept,
+                                        integral_approximation="ala",
+                                        adjusted_curvature=adjusted_curvature,
+                                        tol_grad=tol_grad)
+    start = time.time()
+    model_selection_ALA.run()
+    end = time.time()
+
+    results.append({'dataset': dataset + 1,
+                    'method': 'ALA',
+                    'n': n,
+                    'p': n_covariates,
+                    'p_true': n_active,
+                    'rho': rho,
+                    'beta_true': list(beta_true),
+                    'coef_init': list(coef_init),
+                    'model': model_name,
+                    'force_intercept': force_intercept,
+                    'marginalPProb': list(model_selection_ALA.marginal_postProb),
+                    'postProb': list(model_selection_ALA.postProb),
+                    'recovers_true': all(model_selection_ALA.postMode[force_intercept:] == true_model[force_intercept:]),
+                    'time': end - start})
+    print("ALA results are ready. Starting", smc_runs, "tries of ALASMC.")
     for smc_run in range(smc_runs):
         model_selection_ALASMC = ModelSelectionSMC(X=X,
                                                    y=y,
@@ -123,8 +154,10 @@ def single_dataset(data_creation: Callable,
                         'marginalPProb_euqldist_to_LA': euclidean_distance(model_selection_ALASMC.marginal_postProb[force_intercept:],
                                                                            model_selection_LA.marginal_postProb[force_intercept:]),
                         'recovers_LA': all(model_selection_ALASMC.postMode == model_selection_LA.postMode),
+                        'recovers_ALA': all(model_selection_ALASMC.postMode == model_selection_ALA.postMode),
                         'recovers_true': all(model_selection_ALASMC.postMode[force_intercept:] ==
                                              true_model[force_intercept:]),
+                        'converged': model_selection_ALASMC.iteration != model_selection_ALASMC.maxit_smc,
                         'time': end - start})
         if smc_run % 10 == 0:
             print(f"ALASMC done! [{smc_run + 1} / {smc_runs}]")
@@ -188,8 +221,9 @@ def exp1_data_creation(glm: GLM, rho: float, n: int):
 
 
 if __name__ == "__main__":
-    tol_grad = 1e-13
-    tol_loglike = 1e-10
+    np.random.seed(1337)
+    tol_grad = 1e-10
+    tol_loglike = 1e-13
     smc_runs = 50
     n_datasets = 30
     rho = 0.5
@@ -197,15 +231,15 @@ if __name__ == "__main__":
     kernel = SimpleGibbsKernel
     particle_number = 5000
     burnin = 5000
+    adjusted_curvature = True
     result = []
     for glm in [BinomialLogit(), PoissonRegression()]:
-        adjusted_curvature = isinstance(glm, PoissonRegression)
         force_intercept = isinstance(glm, PoissonRegression)
         result = result + multiple_datasets(exp1_data_creation, n, rho, glm, NewtonRaphson(), normal_prior_log,
                                             beta_binomial_prior_log, SimpleGibbsKernel, burnin, particle_number,
                                             smc_runs, n_datasets, adjusted_curvature, False, tol_grad,
                                             tol_loglike, force_intercept)
-    with open(f'results/experiment1.json', 'w') as file:
+    with open(f'results/experiment1_latest.json', 'w') as file:
         json.dump(result, file)
     print(f"The Experiment 1 is finished.")
 

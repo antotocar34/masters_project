@@ -6,7 +6,6 @@ from scipy.special import expit
 from scipy.stats import bernoulli
 from scipy.special import softmax
 
-from alasmc.smc import SMC
 from alasmc.utilities import get_model_id
 
 
@@ -20,19 +19,20 @@ class Kernel(ABC):
         ...
 
     @abstractmethod
-    def accept_reject(self, model, model_id, smc):
+    def accept_reject(self, model, model_id, compute_conditional_loglike: callable, prior_log: callable):
         model_new = ...
         model_id = get_model_id(model_new)
         return model_new, model_id
 
-    def sweep(self, particles, particle_ids, smc):
+    def sweep(self, particles, particle_ids, compute_conditional_loglike: callable, compute_prior_log: callable):
         num_particles = len(particles)
         new_particles = np.array([None] * num_particles)
         new_particle_ids = np.array([''] * num_particles, dtype=object)
         for idx in range(num_particles):
             new_particles[idx], new_particle_ids[idx] = self.accept_reject(particles[idx],
                                                                            particle_ids[idx],
-                                                                           smc)
+                                                                           compute_conditional_loglike,
+                                                                           compute_prior_log)
         return new_particles, new_particle_ids
         
 
@@ -49,7 +49,6 @@ class SimpleGibbsKernel(Kernel):
 
         Parameters:
             model_cur:       Current particle to provide a new particle in re-sampling procedure.        [numpy.ndarray]
-            force_intercept: If True, the kernel
 
         Returns:
             New particle obtained by sampling form the Markov kernel given the current particle.    [numpy.ndarray]
@@ -60,11 +59,11 @@ class SimpleGibbsKernel(Kernel):
         model_new[i] = not model_cur[i]
         return model_new
 
-    def accept_reject(self, model, model_id, smc: SMC):
+    def accept_reject(self, model, model_id, compute_conditional_loglike: callable, compute_prior_log: callable):
         model_new = self.sample(model)  # Draw a new sample from kernel
         model_id_new = get_model_id(model_new, self.force_intercept)
-        postLLRatio = smc.compute_integrated_loglike(model, model_id) + smc.model_prior_log(model) - \
-            smc.compute_integrated_loglike(model_new, model_id_new) - smc.model_prior_log(model_new)
+        postLLRatio = (compute_conditional_loglike(model, model_id) + compute_prior_log(model) -
+                       compute_conditional_loglike(model_new, model_id_new) - compute_prior_log(model_new))
         uniform = np.random.uniform()
         if uniform <= 1e-200:  # For the sake of dealing with overflow.
             accept = True
@@ -101,7 +100,7 @@ class LogisticKernel(Kernel):
         self.model_matrix = np.stack(particles, axis=0) ##
         p = self.model_matrix.shape[1] ##
     
-        var_average = np.average(particles, weights=particle_weights, axis=0) # Take the weights average of marginals
+        var_average = np.average(particles, weights=particle_weights, axis=0)  # Take the weights average of marginals
 
         def r(i,j):
             x_i = self.model_matrix[:,i] ##
@@ -184,14 +183,14 @@ class LogisticKernel(Kernel):
             prob = prob*q if new_model[i] else prob*(1-q)
         return new_model, prob
 
-    def accept_reject(self, model, model_id, smc):
+    def accept_reject(self, model, model_id, compute_conditional_loglike: callable, compute_prior_log: callable):
         model_new, prob = self.sample(model)
         model_new_id = get_model_id(model_new)
         uniform = np.random.uniform()
         logratio = (
                 (self.log_kernel_func(model)-np.log(prob))
                 +
-                (smc.compute_integrated_loglike(model_new, model_new_id) - smc.compute_integrated_loglike(model, model_id))
+                (compute_conditional_loglike(model_new, model_new_id) - compute_conditional_loglike(model, model_id))
                 )
         accept = np.exp(logratio) > uniform
         model_new = model_new if accept else model

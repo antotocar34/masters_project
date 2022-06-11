@@ -79,7 +79,7 @@ class SMC(ABC):
         """
         resample_indices = self.multinomial_draw()
         # Apply the metropolis step k times to each resampled particles
-        ancestors = np.repeat(None, self.particle_number)  # Initialize vector of new particles
+        ancestors = np.array([-1] * self.particle_number, dtype=int)  # Initialize vector of new particles
         if self.verbose:
             print("Doing Metropolis Resampling...")
         j = 0
