@@ -1,16 +1,18 @@
 import pytest
-
 from collections import Counter
 
+
 import numpy as np
-from scipy.spatial.distance import hamming
+from sklearn.linear_model import LogisticRegression
+# from scipy.spatial.distance import hamming
 
 from termcolor import colored
 
-from alasmc.main import ModelSelectionSMC, ModelKernel, normal_prior
-from alasmc.GLM import BinomialLogit
+from alasmc.main import ModelSelectionSMC, normal_prior_log, beta_binomial_prior_log
+from alasmc.kernels import SimpleGibbsKernel, LogisticKernel
+from alasmc.glm import BinomialLogit
 from alasmc.utilities import get_model_id, model_id_to_vector
-from alasmc.optimization import newton_iteration
+from alasmc.optimization import NewtonRaphson
 
 
 def create_data(n_covariates, n_active):
@@ -25,32 +27,46 @@ def create_data(n_covariates, n_active):
     y = np.random.binomial(1, p, n)
     return (X, y, beta_true)
 
-@pytest.fixture
-def easy_data():
-    n_covariates = 5
-    n_active = 1
+def easy_data(adaptive, kernel):
+    n_covariates = 50
+    n_active = 3
     X, y, beta_true = create_data(n_covariates,n_active)
 
-    kernel = ModelKernel()
+    initial_kernel = SimpleGibbsKernel()
     particle_number = 1000
     model_init = np.array([False] * n_covariates)
     model_init[np.random.choice(n_covariates)] = True
 
     smc = ModelSelectionSMC(X, y, 
                             glm=BinomialLogit,
-                            optimization_procedure=newton_iteration,
+                            optimization_procedure=NewtonRaphson(),
+                            # coef_init=np.array([0] * n_covariates), 
+                            coef_init=LogisticRegression(fit_intercept=False, penalty="none").fit(X,y).coef_[0],
+                            model_init=model_init, 
+                            coef_prior_log=normal_prior_log,
+                            model_prior_log=beta_binomial_prior_log,
                             burnin=1000,
-                            coef_init=np.array([0] * n_covariates), model_init=model_init, coef_prior=normal_prior,
-                            kernel=kernel, kernel_steps=5, particle_number=particle_number, verbose=True)
+                            kernel=kernel, 
+                            initial_kernel=initial_kernel,
+                            adaptive_move=adaptive,
+                            kernel_steps=1, 
+                            particle_number=particle_number, 
+                            verbose=True)
     return smc, beta_true, n_covariates
 
 
 # Simple test, 5 covariates, only one is significant.
 # Tests the functionality of the whole package on a very simple case.
-@pytest.mark.parametrize('execution_number', range(5))
-def test_simple_inference(easy_data, capsys, execution_number):
-    smc, beta_true, n_covariates = easy_data
-    smc.run()
+@pytest.mark.parametrize(('adaptive', 'kernel'), 
+    [
+        # (True, SimpleGibbsKernel()), (False, SimpleGibbsKernel()),
+        (True, LogisticKernel()), (False, LogisticKernel())
+    ]
+    )
+def test_simple_inference(capsys, adaptive, kernel):
+    smc, beta_true, n_covariates = easy_data(adaptive, kernel)
+    with capsys.disabled():
+        smc.run()
     sampled_models = Counter([get_model_id(model) for model in smc.particles])
     true_model_id = get_model_id(beta_true != 0)
     selected_model_id = max(sampled_models, key=sampled_models.get)

@@ -4,6 +4,7 @@ from collections import Counter
 from scipy.special import softmax
 import numpy as np
 
+
 class SMC(ABC):
     """
         ...
@@ -31,7 +32,7 @@ class SMC(ABC):
                  particle_number: int,
                  maxit_smc: int = 40,
                  ess_min_ratio: float = 1/2, 
-                 verbose: bool = False) -> None:
+                 verbose: int = 0) -> None:
         self.kernel = kernel
         self.kernel_steps = kernel_steps
         self.particle_number = particle_number
@@ -41,7 +42,7 @@ class SMC(ABC):
                                                         # of the algorithm is pretty robust to this choice.
         # Initializing useful quantities for later
         self.iteration = 1  # Tracks the t variable
-        self.particles = [None] * self.particle_number # Make into np array?
+        self.particles = np.array([None] * self.particle_number)
         self.w_log = None  # unnormalized logweights
         self.w_normalized = None  # normalized weights
         self.w_hat_log = None  # reweighing multipliers
@@ -78,7 +79,7 @@ class SMC(ABC):
         """
         resample_indices = self.multinomial_draw()
         # Apply the metropolis step k times to each resampled particles
-        ancestors = np.repeat(None, self.particle_number)  # Initialize vector of new particles
+        ancestors = np.array([-1] * self.particle_number, dtype=int)  # Initialize vector of new particles
         if self.verbose:
             print("Doing Metropolis Resampling...")
         j = 0
@@ -136,10 +137,10 @@ class SMC(ABC):
         """
         Calculates the effective sample size.
         """
-        return 1 / sum(self.w_normalized**2)
+        return 1 / np.sum(self.w_normalized**2)
 
     @abstractmethod
-    def run(self): # The code is never run---it is merely suggestive
+    def run(self):  # The code is never run---it is merely suggestive
         """
         Runs the Adaptive SMC algorithm. See Algorithm 2 in the report.
 
@@ -152,12 +153,12 @@ class SMC(ABC):
         Effects:
             Updates all attributes. The logarithm of the estimate of the final normalising constant is kept in 'logLt'.
         """
-        if self.verbose:
+        if self.verbose > 0:
             print('---SMC started---')
         self.sample_init()
         self.w_log = np.zeros(self.particle_number)
         self.w_normalized = np.repeat(1 / self.particle_number, self.particle_number)
-        if self.verbose:
+        if self.verbose > 0:
             print('Iteration 1 done! The initial particles sampled.')
         while self.iteration < self.maxit_smc:  # change to unnormalized weights being close to 1
             self.iteration += 1
@@ -169,7 +170,7 @@ class SMC(ABC):
                 self.w_hat_log = self.w_log
             self.particles = ...  # Update particles with MCMC kernel
             self.update_weights()  # Recalculate weights
-            if self.verbose:
+            if self.verbose > 0:
                 print(f"Iteration {self.iteration} done!")
-        if self.verbose:
+        if self.verbose > 0:
             print('---SMC finished---\n')

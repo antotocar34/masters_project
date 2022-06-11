@@ -5,3 +5,5 @@ pyproject.toml
 /*.egg-info
 __pycache__
 .envrc
+experiments/results
+experiments/*.png
