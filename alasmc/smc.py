@@ -60,7 +60,8 @@ class SMC(ABC):
             Sample of size n from ( 0, 1, ..., len(w_normalized) ) with replacement according to    [numpy.ndarray]
             probabilities given by w_normalized.
         """
-        return multinomial(n=self.particle_number, p=self.w_normalized).rvs()[0]
+        # assert (w_sum := sum(self.w_normalized)) <= 1. and np.isclose(w_sum, 1)
+        return np.random.choice(a=self.particle_number, size=self.particle_number, p=self.w_normalized)
 
 
     @abstractmethod

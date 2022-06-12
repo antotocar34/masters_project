@@ -215,6 +215,7 @@ def exp1_data_creation(glm: GLM, rho: float, n: int):
         X, y = create_data(n=n, rho=rho, model=glm, beta_true=beta_true)
         X = np.column_stack([X, X[:, 1:]**2])
         beta_true = np.concatenate([np.array([0.]), beta_true, np.zeros(5)])
+
     else:
         return None
     return X, y, beta_true
@@ -222,15 +223,15 @@ def exp1_data_creation(glm: GLM, rho: float, n: int):
 
 if __name__ == "__main__":
     np.random.seed(1337)
-    tol_grad = 1e-10
-    tol_loglike = 1e-13
-    smc_runs = 50
+    tol_grad = 1e-8
+    tol_loglike = 1e-10
+    smc_runs = 30
     n_datasets = 30
     rho = 0.5
     n = 1000
     kernel = SimpleGibbsKernel
     particle_number = 5000
-    burnin = 5000
+    burnin = 2000
     adjusted_curvature = True
     result = []
     for glm in [BinomialLogit(), PoissonRegression()]:
@@ -239,7 +240,7 @@ if __name__ == "__main__":
                                             beta_binomial_prior_log, SimpleGibbsKernel, burnin, particle_number,
                                             smc_runs, n_datasets, adjusted_curvature, False, tol_grad,
                                             tol_loglike, force_intercept)
-    with open(f'results/experiment1_latest.json', 'w') as file:
+    with open(f'results/experiment1_latest_precise.json', 'w') as file:
         json.dump(result, file)
     print(f"The Experiment 1 is finished.")
 

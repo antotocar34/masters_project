@@ -255,8 +255,7 @@ class ModelSelectionSMC(SMC):
                                                                                                  self.force_intercept)])
                                                     for model in self.particles])
         self.w_log = self.w_hat_log + self.integrated_loglike_changes
-        w = np.exp(self.w_log)
-        self.w_normalized = w / np.sum(w)
+        self.w_normalized = softmax(self.w_log)
 
     def compute_postProb(self):
         postProb = {}
