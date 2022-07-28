@@ -1,7 +1,9 @@
 """
 Students: Antoine Carnec, Maxim Fedotov
 
-Description TODO
+This file defines the ModelSelectionSMC class,
+which uses a Sequential Monte Carlo sampler strategy
+to get a quick sample from the LA approximation of a model posterior.
 """
 import math
 
@@ -54,7 +56,6 @@ def beta_binomial_prior_log(model: np.ndarray):
 
 class ModelSelectionSMC(SMC):
     """
-        ...
 
         Attributes:
             kernel:          An object with method 'sample'; Markov kernel that draws a new    [callable]
@@ -309,7 +310,6 @@ class ModelSelectionSMC(SMC):
 
 
 class ModelSelection:
-
     def __init__(self, X: np.ndarray,
                  y: np.ndarray,
                  glm: GLM,
@@ -358,8 +358,6 @@ class ModelSelection:
         self.tol_grad = tol_grad  # Let p_t = p_{t+1} once norm of gradient is smaller than this value.
         self.integrated_loglikes = None  # Used to save integrated likelihoods for models.
         self.particle_integrated_loglikes = None  # Used to save integrated likelihoods for models in a current sample.
-        self.particle_priorProb_log = None
-        self.postProb = None
         self.marginal_postProb = None
         self.postMode = None
         self.model_matrix = None
@@ -443,43 +441,3 @@ class ModelSelection:
             self._run_enumeration()
         else:
             self._run_mcmc()
-
-
-if __name__ == '__main__':
-    n_covariates = 9
-    n_active = 3
-    n = 1000
-    rho = 0.5
-    beta_true = np.concatenate([np.zeros(n_covariates - n_active - 1), np.ones(n_active)])
-    X, y = create_data(n=n, rho=rho, model=BinomialLogit, beta_true=beta_true, intercept=0.)
-    kernel = SimpleGibbsKernel
-    particle_number = 5000
-    model_init = np.array([False] * n_covariates)
-
-    smc = ModelSelectionSMC(X, y,
-                            glm=BinomialLogit,
-                            optimization_procedure=NewtonRaphson(),  # brackets are important
-                            coef_init=np.array([0] * n_covariates), model_init=model_init,
-                            coef_prior_log=normal_prior_log,
-                            model_prior_log=beta_binomial_prior_log,
-                            kernel=kernel,
-                            kernel_steps=1,
-                            adaptive_move=False,
-                            burnin=5000,
-                            particle_number=particle_number, verbose=True, tol_grad=1e-13, tol_loglike=1e-13,
-                            force_intercept=False,
-                            adjusted_curvature=True)
-    ms_LA = ModelSelection(X, y, glm=BinomialLogit, optimization_procedure=NewtonRaphson(),
-                           coef_init=np.array([0] * n_covariates), coef_prior_log=normal_prior_log,
-                           model_prior_log=beta_binomial_prior_log, integral_approximation="ala",
-                           adjusted_curvature=True, force_intercept=False)
-    smc.run()
-    ms_LA.run()
-    print(smc.marginal_postProb, smc.postMode)
-    print(ms_LA.marginal_postProb, ms_LA.postMode)
-    # sampled_models = Counter([get_model_id(model) for model in smc.particles])
-    # print(get_model_id(beta_true != 0))
-    # print(smc.particles)
-    # print(sampled_models)
-    # selected_model_id = max(sampled_models, key=sampled_models.get)
-    # print("Selected model: ", bin(selected_model_id)[2:])
